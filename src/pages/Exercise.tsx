@@ -1,14 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Minus, ChevronLeft, History, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useSets, useSessionExercises } from "@/hooks/useSessions";
+import { useSets } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
 
-const rpeScale = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
 const rpeDisplayScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 interface SessionExerciseData {
@@ -35,6 +35,13 @@ export default function Exercise() {
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   
+  // Local state for inputs
+  const [weightValue, setWeightValue] = useState('');
+  const [repsValue, setRepsValue] = useState('');
+  
+  const repsInputRef = useRef<HTMLInputElement>(null);
+  const weightInputRef = useRef<HTMLInputElement>(null);
+  
   const { sets, updateSet, addSet, isLoading } = useSets(sessionExerciseId);
 
   // Load session exercise data
@@ -60,24 +67,89 @@ export default function Exercise() {
     loadData();
   }, [sessionExerciseId]);
 
+  // Update local values when set changes
   const currentSet = sets[selectedSetIndex];
+  
+  useEffect(() => {
+    if (currentSet) {
+      setWeightValue(currentSet.weight.toString());
+      setRepsValue(currentSet.reps.toString());
+    }
+  }, [currentSet?.id, currentSet?.weight, currentSet?.reps]);
+
+  // Auto-focus on reps when set changes
+  useEffect(() => {
+    if (currentSet && repsInputRef.current) {
+      setTimeout(() => {
+        repsInputRef.current?.focus();
+        repsInputRef.current?.select();
+      }, 100);
+    }
+  }, [currentSet?.id]);
+
   const incrementValue = sessionExercise?.exercise?.increment_value || 2.5;
 
-  // Debounced save for weight/reps
-  const saveSet = useCallback((setId: string, updates: { weight?: number; reps?: number }) => {
-    updateSet({ setId, updates });
-  }, [updateSet]);
+  // Save weight
+  const saveWeight = useCallback((value: string) => {
+    if (!currentSet) return;
+    const numValue = parseFloat(value);
+    if (isNaN(numValue) || numValue < 0) {
+      setWeightValue(currentSet.weight.toString());
+      return;
+    }
+    // Round to nearest 0.5
+    const roundedValue = Math.round(numValue * 2) / 2;
+    setWeightValue(roundedValue.toString());
+    updateSet({ setId: currentSet.id, updates: { weight: roundedValue } });
+  }, [currentSet, updateSet]);
+
+  // Save reps and move to next set
+  const saveReps = useCallback((value: string, moveToNext: boolean = false) => {
+    if (!currentSet) return;
+    const numValue = parseInt(value, 10);
+    if (isNaN(numValue) || numValue < 0) {
+      setRepsValue(currentSet.reps.toString());
+      return;
+    }
+    setRepsValue(numValue.toString());
+    updateSet({ setId: currentSet.id, updates: { reps: numValue } });
+    
+    // Move to next set if available
+    if (moveToNext && selectedSetIndex < sets.length - 1) {
+      setSelectedSetIndex(selectedSetIndex + 1);
+    }
+  }, [currentSet, updateSet, selectedSetIndex, sets.length]);
 
   const handleWeightChange = (delta: number) => {
-    if (!currentSet) return;
-    const newWeight = Math.max(0, currentSet.weight + delta);
-    saveSet(currentSet.id, { weight: newWeight });
+    const currentValue = parseFloat(weightValue) || 0;
+    const newValue = Math.max(0, currentValue + delta);
+    const roundedValue = Math.round(newValue * 2) / 2;
+    setWeightValue(roundedValue.toString());
+    if (currentSet) {
+      updateSet({ setId: currentSet.id, updates: { weight: roundedValue } });
+    }
   };
 
   const handleRepsChange = (delta: number) => {
-    if (!currentSet) return;
-    const newReps = Math.max(0, currentSet.reps + delta);
-    saveSet(currentSet.id, { reps: newReps });
+    const currentValue = parseInt(repsValue, 10) || 0;
+    const newValue = Math.max(0, currentValue + delta);
+    setRepsValue(newValue.toString());
+    if (currentSet) {
+      updateSet({ setId: currentSet.id, updates: { reps: newValue } });
+    }
+  };
+
+  const handleWeightKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveWeight(weightValue);
+      repsInputRef.current?.focus();
+    }
+  };
+
+  const handleRepsKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveReps(repsValue, true);
+    }
   };
 
   const handleAddSet = () => {
@@ -86,6 +158,10 @@ export default function Exercise() {
       weight: lastSet?.weight || 0,
       reps: lastSet?.reps || 8,
     });
+    // Switch to new set after a short delay
+    setTimeout(() => {
+      setSelectedSetIndex(sets.length);
+    }, 100);
   };
 
   const handleRpeChange = async (rpe: number) => {
@@ -99,13 +175,20 @@ export default function Exercise() {
   };
 
   const handleQuickAddRep = () => {
-    if (!currentSet) return;
-    saveSet(currentSet.id, { reps: currentSet.reps + 1 });
+    handleRepsChange(1);
   };
 
   const handleQuickAddWeight = () => {
-    if (!currentSet) return;
-    saveSet(currentSet.id, { weight: currentSet.weight + incrementValue });
+    handleWeightChange(incrementValue);
+  };
+
+  const handleSetSelect = (index: number) => {
+    // Save current values before switching
+    if (currentSet) {
+      saveWeight(weightValue);
+      saveReps(repsValue, false);
+    }
+    setSelectedSetIndex(index);
   };
 
   if (!sessionExerciseId || !sessionExercise) {
@@ -150,7 +233,7 @@ export default function Exercise() {
           {sets.map((set, index) => (
             <button
               key={set.id}
-              onClick={() => setSelectedSetIndex(index)}
+              onClick={() => handleSetSelect(index)}
               className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors ${
                 index === selectedSetIndex
                   ? 'bg-primary text-primary-foreground'
@@ -179,18 +262,25 @@ export default function Exercise() {
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="h-12 w-12 rounded-full"
+                    className="h-12 w-12 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(-incrementValue)}
                   >
                     <Minus className="h-5 w-5" />
                   </Button>
-                  <span className="text-3xl font-bold font-mono text-foreground w-20 text-center">
-                    {currentSet.weight}
-                  </span>
+                  <Input
+                    ref={weightInputRef}
+                    type="text"
+                    inputMode="decimal"
+                    value={weightValue}
+                    onChange={(e) => setWeightValue(e.target.value)}
+                    onBlur={() => saveWeight(weightValue)}
+                    onKeyDown={handleWeightKeyDown}
+                    className="w-20 h-14 text-center text-2xl font-bold font-mono bg-secondary border-border"
+                  />
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="h-12 w-12 rounded-full"
+                    className="h-12 w-12 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(incrementValue)}
                   >
                     <Plus className="h-5 w-5" />
@@ -205,18 +295,25 @@ export default function Exercise() {
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="h-12 w-12 rounded-full"
+                    className="h-12 w-12 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(-1)}
                   >
                     <Minus className="h-5 w-5" />
                   </Button>
-                  <span className="text-3xl font-bold font-mono text-foreground w-20 text-center">
-                    {currentSet.reps}
-                  </span>
+                  <Input
+                    ref={repsInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    value={repsValue}
+                    onChange={(e) => setRepsValue(e.target.value)}
+                    onBlur={() => saveReps(repsValue, false)}
+                    onKeyDown={handleRepsKeyDown}
+                    className="w-20 h-14 text-center text-2xl font-bold font-mono bg-secondary border-border"
+                  />
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="h-12 w-12 rounded-full"
+                    className="h-12 w-12 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(1)}
                   >
                     <Plus className="h-5 w-5" />
@@ -289,7 +386,7 @@ export default function Exercise() {
             {sets.map((set, index) => (
               <button
                 key={set.id}
-                onClick={() => setSelectedSetIndex(index)}
+                onClick={() => handleSetSelect(index)}
                 className={`w-full flex items-center justify-between py-2 px-3 rounded-lg transition-colors ${
                   index === selectedSetIndex ? 'bg-primary/20' : 'bg-secondary/50'
                 }`}
