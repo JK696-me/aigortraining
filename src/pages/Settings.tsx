@@ -3,9 +3,17 @@ import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 export default function Settings() {
   const { locale, setLocale, t } = useLanguage();
+  const { user, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+    toast.success(t('signOut'));
+  };
 
   return (
     <Layout>
@@ -26,10 +34,9 @@ export default function Settings() {
               <User className="h-7 w-7 text-primary" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-foreground">{t('guestUser')}</h3>
-              <p className="text-sm text-muted-foreground">{t('tapToSignIn')}</p>
+              <h3 className="font-semibold text-foreground truncate">{user?.email}</h3>
+              <p className="text-sm text-muted-foreground">{t('loggedInAs')}</p>
             </div>
-            <ChevronRight className="h-5 w-5 text-muted-foreground" />
           </div>
         </Card>
 
@@ -137,7 +144,10 @@ export default function Settings() {
 
         {/* Logout */}
         <Card className="bg-card border-border overflow-hidden">
-          <button className="flex items-center gap-3 p-4 w-full text-destructive">
+          <button 
+            onClick={handleSignOut}
+            className="flex items-center gap-3 p-4 w-full text-destructive"
+          >
             <LogOut className="h-5 w-5" />
             <span className="font-medium">{t('signOut')}</span>
           </button>
