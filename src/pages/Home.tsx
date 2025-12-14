@@ -20,7 +20,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { t, formatDate } = useLanguage();
   const { user } = useAuth();
-  const { sessions, createSession, isCreating } = useSessions();
+  const { createSession, isCreating } = useSessions();
   const [isRepeating, setIsRepeating] = useState(false);
 
   const handleStartWorkout = async () => {
@@ -33,15 +33,29 @@ export default function Home() {
   };
 
   const handleRepeatLastWorkout = async () => {
-    if (!user || sessions.length === 0) {
+    if (!user) {
       toast.error(t('noLastWorkout'));
       return;
     }
 
     setIsRepeating(true);
     try {
-      const lastSession = sessions[0];
-      
+      // Get last COMPLETED session
+      const { data: lastSession, error: lastError } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastError || !lastSession) {
+        toast.error(t('noLastWorkout'));
+        setIsRepeating(false);
+        return;
+      }
+
       // Create new session
       const { data: newSession, error: sessionError } = await supabase
         .from('sessions')
@@ -49,24 +63,22 @@ export default function Home() {
           user_id: user.id,
           date: new Date().toISOString(),
           source: 'repeat',
+          status: 'draft',
         })
         .select()
         .single();
 
       if (sessionError) throw sessionError;
 
-      // Get exercises from last session with their sets
-      const { data: lastExercises, error: exError } = await supabase
+      // Get exercises from last session
+      const { data: lastExercises } = await supabase
         .from('session_exercises')
-        .select('*, exercise:exercises(*)')
+        .select('*')
         .eq('session_id', lastSession.id);
-
-      if (exError) throw exError;
 
       // Copy each exercise and its sets
       for (const se of lastExercises || []) {
-        // Create session_exercise
-        const { data: newSe, error: newSeError } = await supabase
+        const { data: newSe } = await supabase
           .from('session_exercises')
           .insert({
             session_id: newSession.id,
@@ -75,7 +87,7 @@ export default function Home() {
           .select()
           .single();
 
-        if (newSeError) continue;
+        if (!newSe) continue;
 
         // Get and copy sets
         const { data: lastSets } = await supabase
@@ -135,7 +147,7 @@ export default function Home() {
 
           <Button
             onClick={handleRepeatLastWorkout}
-            disabled={isRepeating || sessions.length === 0}
+            disabled={isRepeating}
             variant="secondary"
             className="w-full h-14 text-base font-medium"
             size="lg"

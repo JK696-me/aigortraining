@@ -159,26 +159,32 @@ export type Database = {
       }
       sessions: {
         Row: {
+          completed_at: string | null
           created_at: string
           date: string
           id: string
           source: string
+          status: string
           template_id: string | null
           user_id: string
         }
         Insert: {
+          completed_at?: string | null
           created_at?: string
           date: string
           id?: string
           source: string
+          status?: string
           template_id?: string | null
           user_id: string
         }
         Update: {
+          completed_at?: string | null
           created_at?: string
           date?: string
           id?: string
           source?: string
+          status?: string
           template_id?: string | null
           user_id?: string
         }
