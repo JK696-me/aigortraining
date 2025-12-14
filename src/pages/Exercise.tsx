@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useNavigate } from "react-router-dom";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const mockSets = [
   { id: 1, weight: 80, reps: 10, completed: true, rpe: 7 },
@@ -14,6 +15,7 @@ const rpeScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 export default function Exercise() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   return (
     <Layout>
@@ -25,7 +27,7 @@ export default function Exercise() {
             className="flex items-center gap-1 text-muted-foreground mb-3"
           >
             <ChevronLeft className="h-5 w-5" />
-            <span className="text-sm">Back to workout</span>
+            <span className="text-sm">{t('backToWorkout')}</span>
           </button>
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">Bench Press</h1>
@@ -37,7 +39,7 @@ export default function Exercise() {
               <History className="h-5 w-5 text-muted-foreground" />
             </Button>
           </div>
-          <p className="text-muted-foreground">Set 3 of 3</p>
+          <p className="text-muted-foreground">{t('setOf')} 3 {t('of')} 3</p>
         </div>
 
         {/* Current Set Input */}
@@ -45,7 +47,7 @@ export default function Exercise() {
           <div className="grid grid-cols-2 gap-6 mb-6">
             {/* Weight */}
             <div className="text-center">
-              <p className="text-sm text-muted-foreground mb-2">Weight (kg)</p>
+              <p className="text-sm text-muted-foreground mb-2">{t('weightKg')}</p>
               <div className="flex items-center justify-center gap-3">
                 <Button
                   variant="secondary"
@@ -69,7 +71,7 @@ export default function Exercise() {
 
             {/* Reps */}
             <div className="text-center">
-              <p className="text-sm text-muted-foreground mb-2">Reps</p>
+              <p className="text-sm text-muted-foreground mb-2">{t('reps')}</p>
               <div className="flex items-center justify-center gap-3">
                 <Button
                   variant="secondary"
@@ -94,7 +96,7 @@ export default function Exercise() {
 
           {/* RPE Selector */}
           <div>
-            <p className="text-sm text-muted-foreground mb-3 text-center">RPE (Rate of Perceived Exertion)</p>
+            <p className="text-sm text-muted-foreground mb-3 text-center">{t('rpeLabel')}</p>
             <div className="flex justify-between gap-1">
               {rpeScale.map((rpe) => (
                 <button
@@ -120,11 +122,11 @@ export default function Exercise() {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <Button variant="secondary" className="h-14 text-base font-medium">
             <Plus className="h-4 w-4 mr-2" />
-            +1 Rep
+            {t('addRep')}
           </Button>
           <Button variant="secondary" className="h-14 text-base font-medium">
             <Plus className="h-4 w-4 mr-2" />
-            +2.5 kg
+            {t('addWeight')}
           </Button>
         </div>
 
@@ -133,21 +135,21 @@ export default function Exercise() {
           className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
           size="lg"
         >
-          Log Set
+          {t('logSet')}
         </Button>
 
         {/* Previous Sets */}
         <div className="mb-6">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">Previous Sets</h3>
+          <h3 className="text-sm font-medium text-muted-foreground mb-3">{t('previousSets')}</h3>
           <div className="space-y-2">
             {mockSets.filter(s => s.completed).map((set) => (
               <div
                 key={set.id}
                 className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
               >
-                <span className="text-sm text-muted-foreground">Set {set.id}</span>
+                <span className="text-sm text-muted-foreground">{t('set')} {set.id}</span>
                 <span className="font-mono font-medium text-foreground">
-                  {set.weight}kg × {set.reps}
+                  {set.weight}{t('kg')} × {set.reps}
                 </span>
                 <span className="text-sm text-accent">RPE {set.rpe}</span>
               </div>
@@ -160,9 +162,9 @@ export default function Exercise() {
           <div className="flex items-start gap-3">
             <Lightbulb className="h-5 w-5 text-primary mt-0.5" />
             <div>
-              <h4 className="font-semibold text-foreground mb-1">Next Time Recommendation</h4>
+              <h4 className="font-semibold text-foreground mb-1">{t('nextTimeRecommendation')}</h4>
               <p className="text-sm text-muted-foreground">
-                Try 87.5kg × 8 reps based on your progression
+                {t('basedOnProgress')}: 87.5{t('kg')} × 8
               </p>
             </div>
           </div>

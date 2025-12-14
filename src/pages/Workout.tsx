@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useNavigate } from "react-router-dom";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 const mockExercises = [
   { id: 1, name: "Bench Press", sets: 3, completed: 2 },
@@ -13,6 +14,7 @@ const mockExercises = [
 
 export default function Workout() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   return (
     <Layout>
@@ -20,7 +22,7 @@ export default function Workout() {
         {/* Header */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <h1 className="text-2xl font-bold text-foreground">Current Workout</h1>
+            <h1 className="text-2xl font-bold text-foreground">{t('currentWorkout')}</h1>
             <div className="flex items-center gap-2 text-muted-foreground">
               <Timer className="h-4 w-4" />
               <span className="text-sm font-mono">32:15</span>
@@ -31,7 +33,7 @@ export default function Workout() {
               <Flame className="h-4 w-4" />
               <span className="text-sm font-medium">Push Day</span>
             </div>
-            <span className="text-sm text-muted-foreground">2/4 exercises</span>
+            <span className="text-sm text-muted-foreground">2/4 {t('exercisesCount')}</span>
           </div>
         </div>
 
@@ -65,7 +67,7 @@ export default function Workout() {
                   <div>
                     <h3 className="font-semibold text-foreground">{exercise.name}</h3>
                     <p className="text-sm text-muted-foreground">
-                      {exercise.sets} sets
+                      {exercise.sets} {t('sets')}
                     </p>
                   </div>
                 </div>
@@ -83,7 +85,7 @@ export default function Workout() {
             size="lg"
           >
             <Plus className="h-5 w-5 mr-2" />
-            Add Exercise
+            {t('addExercise')}
           </Button>
 
           <Button
@@ -91,7 +93,7 @@ export default function Workout() {
             size="lg"
           >
             <Check className="h-6 w-6 mr-2" />
-            Finish Workout
+            {t('finishWorkout')}
           </Button>
         </div>
       </div>
