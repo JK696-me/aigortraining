@@ -2,6 +2,24 @@ export type Locale = 'ru' | 'en';
 
 export const translations = {
   ru: {
+    // Auth
+    signIn: 'Вход',
+    signUpTitle: 'Регистрация',
+    signUpButton: 'Зарегистрироваться',
+    signUpLink: 'Зарегистрироваться',
+    signInLink: 'Войти',
+    noAccount: 'Нет аккаунта?',
+    hasAccount: 'Уже есть аккаунт?',
+    password: 'Пароль',
+    fillAllFields: 'Заполните все поля',
+    passwordTooShort: 'Пароль должен быть не менее 6 символов',
+    invalidCredentials: 'Неверный email или пароль',
+    userAlreadyExists: 'Пользователь уже зарегистрирован',
+    checkEmail: 'Проверьте почту для подтверждения',
+    emailConfirmHint: 'Для тестирования можно отключить подтверждение email в настройках Supabase',
+    appSubtitle: 'Умный дневник тренировок',
+    loggedInAs: 'Вы вошли как',
+    
     // Navigation
     home: 'Главная',
     workout: 'Тренировка',
@@ -81,6 +99,24 @@ export const translations = {
     kg: 'кг',
   },
   en: {
+    // Auth
+    signIn: 'Sign In',
+    signUpTitle: 'Sign Up',
+    signUpButton: 'Sign Up',
+    signUpLink: 'Sign up',
+    signInLink: 'Sign in',
+    noAccount: "Don't have an account?",
+    hasAccount: 'Already have an account?',
+    password: 'Password',
+    fillAllFields: 'Please fill in all fields',
+    passwordTooShort: 'Password must be at least 6 characters',
+    invalidCredentials: 'Invalid email or password',
+    userAlreadyExists: 'User already registered',
+    checkEmail: 'Check your email for confirmation',
+    emailConfirmHint: 'For testing, you can disable email confirmation in Supabase settings',
+    appSubtitle: 'Smart workout journal',
+    loggedInAs: 'Logged in as',
+    
     // Navigation
     home: 'Home',
     workout: 'Workout',
