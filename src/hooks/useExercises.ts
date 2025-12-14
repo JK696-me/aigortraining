@@ -1,0 +1,111 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+
+export interface Exercise {
+  id: string;
+  user_id: string;
+  name: string;
+  type: number;
+  increment_kind: 'barbell' | 'dumbbells' | 'machine';
+  increment_value: number;
+  is_dumbbell_pair: boolean;
+  created_at: string;
+}
+
+export type ExerciseInsert = Omit<Exercise, 'id' | 'user_id' | 'created_at'>;
+export type ExerciseUpdate = Partial<ExerciseInsert>;
+
+export function useExercises(searchQuery?: string) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const { data: exercises = [], isLoading } = useQuery({
+    queryKey: ['exercises', user?.id, searchQuery],
+    queryFn: async () => {
+      if (!user) return [];
+      
+      let query = supabase
+        .from('exercises')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('name');
+      
+      if (searchQuery) {
+        query = query.ilike('name', `%${searchQuery}%`);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) throw error;
+      return data as Exercise[];
+    },
+    enabled: !!user,
+  });
+
+  const createExercise = useMutation({
+    mutationFn: async (exercise: ExerciseInsert) => {
+      if (!user) throw new Error('Not authenticated');
+      
+      const { data, error } = await supabase
+        .from('exercises')
+        .insert({ ...exercise, user_id: user.id })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data as Exercise;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+    },
+  });
+
+  const updateExercise = useMutation({
+    mutationFn: async ({ id, updates }: { id: string; updates: ExerciseUpdate }) => {
+      if (!user) throw new Error('Not authenticated');
+      
+      const { data, error } = await supabase
+        .from('exercises')
+        .update(updates)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data as Exercise;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+    },
+  });
+
+  const deleteExercise = useMutation({
+    mutationFn: async (id: string) => {
+      if (!user) throw new Error('Not authenticated');
+      
+      const { error } = await supabase
+        .from('exercises')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+    },
+  });
+
+  return {
+    exercises,
+    isLoading,
+    createExercise: createExercise.mutate,
+    updateExercise: updateExercise.mutate,
+    deleteExercise: deleteExercise.mutate,
+    isCreating: createExercise.isPending,
+    isUpdating: updateExercise.isPending,
+    isDeleting: deleteExercise.isPending,
+  };
+}

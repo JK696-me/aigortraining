@@ -10,6 +10,7 @@ import Home from "./pages/Home";
 import Workout from "./pages/Workout";
 import Exercise from "./pages/Exercise";
 import ExerciseHistory from "./pages/ExerciseHistory";
+import ExercisesList from "./pages/ExercisesList";
 import Settings from "./pages/Settings";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -30,6 +31,7 @@ const App = () => (
               <Route path="/workout" element={<ProtectedRoute><Workout /></ProtectedRoute>} />
               <Route path="/exercise" element={<ProtectedRoute><Exercise /></ProtectedRoute>} />
               <Route path="/exercise-history" element={<ProtectedRoute><ExerciseHistory /></ProtectedRoute>} />
+              <Route path="/exercises" element={<ProtectedRoute><ExercisesList /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>

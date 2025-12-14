@@ -273,6 +273,38 @@ export type Database = {
           },
         ]
       }
+      user_settings: {
+        Row: {
+          barbell_increment: number
+          dumbbells_increment: number
+          machine_increment: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          barbell_increment?: number
+          dumbbells_increment?: number
+          machine_increment?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          barbell_increment?: number
+          dumbbells_increment?: number
+          machine_increment?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_settings_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           created_at: string
