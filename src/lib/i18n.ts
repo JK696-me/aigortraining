@@ -132,6 +132,15 @@ export const translations = {
     
     // Units
     kg: 'кг',
+    
+    // Workout
+    noActiveSession: 'Нет активной тренировки',
+    startNewWorkout: 'Начните новую тренировку',
+    noExercisesInWorkout: 'Нет упражнений',
+    addExercisesToStart: 'Добавьте упражнения для начала',
+    comingSoon: 'Скоро появится',
+    workoutFinished: 'Тренировка завершена',
+    noLastWorkout: 'Нет предыдущих тренировок',
   },
   en: {
     // Auth
@@ -264,6 +273,15 @@ export const translations = {
     
     // Units
     kg: 'kg',
+    
+    // Workout
+    noActiveSession: 'No active workout',
+    startNewWorkout: 'Start a new workout',
+    noExercisesInWorkout: 'No exercises',
+    addExercisesToStart: 'Add exercises to get started',
+    comingSoon: 'Coming soon',
+    workoutFinished: 'Workout finished',
+    noLastWorkout: 'No previous workouts',
   },
 };
 

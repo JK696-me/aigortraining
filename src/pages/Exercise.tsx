@@ -1,36 +1,137 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Minus, ChevronLeft, History, Lightbulb } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
-import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useSets, useSessionExercises } from "@/hooks/useSessions";
+import { supabase } from "@/integrations/supabase/client";
 
-const mockSets = [
-  { id: 1, weight: 80, reps: 10, completed: true, rpe: 7 },
-  { id: 2, weight: 85, reps: 8, completed: true, rpe: 8 },
-  { id: 3, weight: 85, reps: 0, completed: false, rpe: null },
-];
+const rpeScale = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+const rpeDisplayScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-const rpeScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+interface SessionExerciseData {
+  id: string;
+  session_id: string;
+  exercise_id: string;
+  rpe: number | null;
+  exercise: {
+    id: string;
+    name: string;
+    type: number;
+    increment_kind: string;
+    increment_value: number;
+  };
+}
 
 export default function Exercise() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sessionExerciseId = searchParams.get('se');
   const { t } = useLanguage();
+  
+  const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
+  const [selectedSetIndex, setSelectedSetIndex] = useState(0);
+  const [currentRpe, setCurrentRpe] = useState<number | null>(null);
+  
+  const { sets, updateSet, addSet, isLoading } = useSets(sessionExerciseId);
+
+  // Load session exercise data
+  useEffect(() => {
+    if (!sessionExerciseId) return;
+    
+    const loadData = async () => {
+      const { data } = await supabase
+        .from('session_exercises')
+        .select(`
+          *,
+          exercise:exercises(id, name, type, increment_kind, increment_value)
+        `)
+        .eq('id', sessionExerciseId)
+        .single();
+      
+      if (data) {
+        setSessionExercise(data as SessionExerciseData);
+        setCurrentRpe(data.rpe);
+      }
+    };
+    
+    loadData();
+  }, [sessionExerciseId]);
+
+  const currentSet = sets[selectedSetIndex];
+  const incrementValue = sessionExercise?.exercise?.increment_value || 2.5;
+
+  // Debounced save for weight/reps
+  const saveSet = useCallback((setId: string, updates: { weight?: number; reps?: number }) => {
+    updateSet({ setId, updates });
+  }, [updateSet]);
+
+  const handleWeightChange = (delta: number) => {
+    if (!currentSet) return;
+    const newWeight = Math.max(0, currentSet.weight + delta);
+    saveSet(currentSet.id, { weight: newWeight });
+  };
+
+  const handleRepsChange = (delta: number) => {
+    if (!currentSet) return;
+    const newReps = Math.max(0, currentSet.reps + delta);
+    saveSet(currentSet.id, { reps: newReps });
+  };
+
+  const handleAddSet = () => {
+    const lastSet = sets[sets.length - 1];
+    addSet({
+      weight: lastSet?.weight || 0,
+      reps: lastSet?.reps || 8,
+    });
+  };
+
+  const handleRpeChange = async (rpe: number) => {
+    setCurrentRpe(rpe);
+    if (!sessionExerciseId) return;
+    
+    await supabase
+      .from('session_exercises')
+      .update({ rpe })
+      .eq('id', sessionExerciseId);
+  };
+
+  const handleQuickAddRep = () => {
+    if (!currentSet) return;
+    saveSet(currentSet.id, { reps: currentSet.reps + 1 });
+  };
+
+  const handleQuickAddWeight = () => {
+    if (!currentSet) return;
+    saveSet(currentSet.id, { weight: currentSet.weight + incrementValue });
+  };
+
+  if (!sessionExerciseId || !sessionExercise) {
+    return (
+      <Layout>
+        <div className="px-4 pt-12 safe-top flex items-center justify-center min-h-[60vh]">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
-      <div className="px-4 pt-12 safe-top">
+      <div className="px-4 pt-12 safe-top pb-24">
         {/* Header */}
         <div className="mb-6">
           <button
-            onClick={() => navigate("/workout")}
+            onClick={() => navigate(`/workout?session=${sessionExercise.session_id}`)}
             className="flex items-center gap-1 text-muted-foreground mb-3"
           >
             <ChevronLeft className="h-5 w-5" />
             <span className="text-sm">{t('backToWorkout')}</span>
           </button>
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-foreground">Bench Press</h1>
+            <h1 className="text-2xl font-bold text-foreground">{sessionExercise.exercise.name}</h1>
             <Button
               variant="ghost"
               size="icon"
@@ -39,120 +140,165 @@ export default function Exercise() {
               <History className="h-5 w-5 text-muted-foreground" />
             </Button>
           </div>
-          <p className="text-muted-foreground">{t('setOf')} 3 {t('of')} 3</p>
+          <p className="text-muted-foreground">
+            {t('setOf')} {selectedSetIndex + 1} {t('of')} {sets.length}
+          </p>
+        </div>
+
+        {/* Set Tabs */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+          {sets.map((set, index) => (
+            <button
+              key={set.id}
+              onClick={() => setSelectedSetIndex(index)}
+              className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors ${
+                index === selectedSetIndex
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary text-muted-foreground'
+              }`}
+            >
+              {index + 1}
+            </button>
+          ))}
+          <button
+            onClick={handleAddSet}
+            className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
         </div>
 
         {/* Current Set Input */}
-        <Card className="p-6 bg-card border-border mb-6">
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* Weight */}
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground mb-2">{t('weightKg')}</p>
-              <div className="flex items-center justify-center gap-3">
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-12 w-12 rounded-full"
-                >
-                  <Minus className="h-5 w-5" />
-                </Button>
-                <span className="text-4xl font-bold font-mono text-foreground w-20">
-                  85
-                </span>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-12 w-12 rounded-full"
-                >
-                  <Plus className="h-5 w-5" />
-                </Button>
+        {currentSet && (
+          <Card className="p-6 bg-card border-border mb-6">
+            <div className="grid grid-cols-2 gap-6 mb-6">
+              {/* Weight */}
+              <div className="text-center">
+                <p className="text-sm text-muted-foreground mb-2">{t('weightKg')}</p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-12 w-12 rounded-full"
+                    onClick={() => handleWeightChange(-incrementValue)}
+                  >
+                    <Minus className="h-5 w-5" />
+                  </Button>
+                  <span className="text-3xl font-bold font-mono text-foreground w-20 text-center">
+                    {currentSet.weight}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-12 w-12 rounded-full"
+                    onClick={() => handleWeightChange(incrementValue)}
+                  >
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Reps */}
+              <div className="text-center">
+                <p className="text-sm text-muted-foreground mb-2">{t('reps')}</p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-12 w-12 rounded-full"
+                    onClick={() => handleRepsChange(-1)}
+                  >
+                    <Minus className="h-5 w-5" />
+                  </Button>
+                  <span className="text-3xl font-bold font-mono text-foreground w-20 text-center">
+                    {currentSet.reps}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-12 w-12 rounded-full"
+                    onClick={() => handleRepsChange(1)}
+                  >
+                    <Plus className="h-5 w-5" />
+                  </Button>
+                </div>
               </div>
             </div>
 
-            {/* Reps */}
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground mb-2">{t('reps')}</p>
-              <div className="flex items-center justify-center gap-3">
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-12 w-12 rounded-full"
-                >
-                  <Minus className="h-5 w-5" />
-                </Button>
-                <span className="text-4xl font-bold font-mono text-foreground w-20">
-                  8
-                </span>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-12 w-12 rounded-full"
-                >
-                  <Plus className="h-5 w-5" />
-                </Button>
+            {/* RPE Selector */}
+            <div>
+              <p className="text-sm text-muted-foreground mb-3 text-center">{t('rpeLabel')}</p>
+              <div className="flex justify-between gap-1">
+                {rpeDisplayScale.map((rpe) => (
+                  <button
+                    key={rpe}
+                    onClick={() => handleRpeChange(rpe)}
+                    className={`flex-1 h-10 rounded-lg font-mono font-bold text-sm transition-colors ${
+                      currentRpe === rpe
+                        ? "bg-primary text-primary-foreground"
+                        : rpe >= 9
+                        ? "bg-destructive/20 text-destructive hover:bg-destructive/30"
+                        : rpe >= 7
+                        ? "bg-accent/20 text-accent hover:bg-accent/30"
+                        : "bg-secondary text-muted-foreground hover:bg-secondary/80"
+                    }`}
+                  >
+                    {rpe}
+                  </button>
+                ))}
               </div>
             </div>
-          </div>
-
-          {/* RPE Selector */}
-          <div>
-            <p className="text-sm text-muted-foreground mb-3 text-center">{t('rpeLabel')}</p>
-            <div className="flex justify-between gap-1">
-              {rpeScale.map((rpe) => (
-                <button
-                  key={rpe}
-                  className={`flex-1 h-10 rounded-lg font-mono font-bold text-sm transition-colors ${
-                    rpe === 8
-                      ? "bg-primary text-primary-foreground"
-                      : rpe >= 9
-                      ? "bg-destructive/20 text-destructive hover:bg-destructive/30"
-                      : rpe >= 7
-                      ? "bg-accent/20 text-accent hover:bg-accent/30"
-                      : "bg-secondary text-muted-foreground hover:bg-secondary/80"
-                  }`}
-                >
-                  {rpe}
-                </button>
-              ))}
-            </div>
-          </div>
-        </Card>
+          </Card>
+        )}
 
         {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-3 mb-6">
-          <Button variant="secondary" className="h-14 text-base font-medium">
+          <Button 
+            variant="secondary" 
+            className="h-14 text-base font-medium"
+            onClick={handleQuickAddRep}
+          >
             <Plus className="h-4 w-4 mr-2" />
             {t('addRep')}
           </Button>
-          <Button variant="secondary" className="h-14 text-base font-medium">
+          <Button 
+            variant="secondary" 
+            className="h-14 text-base font-medium"
+            onClick={handleQuickAddWeight}
+          >
             <Plus className="h-4 w-4 mr-2" />
-            {t('addWeight')}
+            +{incrementValue} {t('kg')}
           </Button>
         </div>
 
-        {/* Log Set Button */}
+        {/* Add Set Button */}
         <Button
-          className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
+          onClick={handleAddSet}
+          variant="secondary"
+          className="w-full h-14 text-base font-medium mb-6"
           size="lg"
         >
-          {t('logSet')}
+          <Plus className="h-5 w-5 mr-2" />
+          {t('addSet')}
         </Button>
 
-        {/* Previous Sets */}
+        {/* All Sets Summary */}
         <div className="mb-6">
           <h3 className="text-sm font-medium text-muted-foreground mb-3">{t('previousSets')}</h3>
           <div className="space-y-2">
-            {mockSets.filter(s => s.completed).map((set) => (
-              <div
+            {sets.map((set, index) => (
+              <button
                 key={set.id}
-                className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/50"
+                onClick={() => setSelectedSetIndex(index)}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-lg transition-colors ${
+                  index === selectedSetIndex ? 'bg-primary/20' : 'bg-secondary/50'
+                }`}
               >
-                <span className="text-sm text-muted-foreground">{t('set')} {set.id}</span>
+                <span className="text-sm text-muted-foreground">{t('set')} {set.set_index}</span>
                 <span className="font-mono font-medium text-foreground">
                   {set.weight}{t('kg')} × {set.reps}
                 </span>
-                <span className="text-sm text-accent">RPE {set.rpe}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -164,7 +310,7 @@ export default function Exercise() {
             <div>
               <h4 className="font-semibold text-foreground mb-1">{t('nextTimeRecommendation')}</h4>
               <p className="text-sm text-muted-foreground">
-                {t('basedOnProgress')}: 87.5{t('kg')} × 8
+                {t('comingSoon')}
               </p>
             </div>
           </div>
