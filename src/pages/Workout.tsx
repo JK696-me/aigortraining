@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useSession, useSessionExercises, useExerciseState, useLastExerciseSets } from "@/hooks/useSessions";
-import { useExercises, Exercise } from "@/hooks/useExercises";
+import { useSession, useSessionExercises } from "@/hooks/useSessions";
+import { Exercise } from "@/hooks/useExercises";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ export default function Workout() {
   const { exercises: sessionExercises, isLoading, addExercise } = useSessionExercises(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [workoutTime, setWorkoutTime] = useState(0);
+  const [isFinishing, setIsFinishing] = useState(false);
 
   // Timer
   useEffect(() => {
@@ -53,11 +54,15 @@ export default function Workout() {
 
       const setsCount = exerciseState?.current_sets || 3;
 
-      // Get last sets for this exercise
-      const { data: lastSets } = await supabase
+      // Get last completed session's sets for this exercise
+      const { data: lastSessionExercise } = await supabase
         .from('session_exercises')
-        .select('id')
+        .select(`
+          id,
+          session:sessions!inner(status)
+        `)
         .eq('exercise_id', exercise.id)
+        .eq('sessions.status', 'completed')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -65,11 +70,11 @@ export default function Workout() {
       let lastWeight = 0;
       let lastReps = exercise.type <= 2 ? 6 : 10;
 
-      if (lastSets) {
+      if (lastSessionExercise) {
         const { data: sets } = await supabase
           .from('sets')
           .select('weight, reps')
-          .eq('session_exercise_id', lastSets.id)
+          .eq('session_exercise_id', lastSessionExercise.id)
           .order('set_index')
           .limit(1);
 
@@ -93,9 +98,30 @@ export default function Workout() {
     }
   };
 
-  const handleFinishWorkout = () => {
-    toast.success(t('workoutFinished'));
-    navigate('/');
+  const handleFinishWorkout = async () => {
+    if (!sessionId) return;
+    
+    setIsFinishing(true);
+    try {
+      // Update session status to completed
+      const { error } = await supabase
+        .from('sessions')
+        .update({ 
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', sessionId);
+
+      if (error) throw error;
+
+      toast.success(t('workoutFinished'));
+      navigate('/');
+    } catch (error) {
+      console.error('Failed to finish workout:', error);
+      toast.error('Failed to finish workout');
+    } finally {
+      setIsFinishing(false);
+    }
   };
 
   if (!sessionId) {
@@ -183,6 +209,7 @@ export default function Workout() {
 
           <Button
             onClick={handleFinishWorkout}
+            disabled={isFinishing || sessionExercises.length === 0}
             className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
             size="lg"
           >

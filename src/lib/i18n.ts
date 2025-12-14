@@ -141,6 +141,15 @@ export const translations = {
     comingSoon: 'Скоро появится',
     workoutFinished: 'Тренировка завершена',
     noLastWorkout: 'Нет предыдущих тренировок',
+    
+    // History
+    workoutHistory: 'История тренировок',
+    noCompletedWorkouts: 'Нет завершённых тренировок',
+    completeFirstWorkout: 'Завершите первую тренировку',
+    workoutDetails: 'Детали тренировки',
+    duration: 'Длительность',
+    minutes: 'мин',
+    totalSets: 'Всего подходов',
   },
   en: {
     // Auth
@@ -282,6 +291,15 @@ export const translations = {
     comingSoon: 'Coming soon',
     workoutFinished: 'Workout finished',
     noLastWorkout: 'No previous workouts',
+    
+    // History
+    workoutHistory: 'Workout History',
+    noCompletedWorkouts: 'No completed workouts',
+    completeFirstWorkout: 'Complete your first workout',
+    workoutDetails: 'Workout Details',
+    duration: 'Duration',
+    minutes: 'min',
+    totalSets: 'Total sets',
   },
 };
 
