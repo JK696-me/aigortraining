@@ -69,6 +69,11 @@ export const translations = {
     progressiveOverload: 'Прогрессивная нагрузка',
     progressMessage: 'Вы увеличили вес 4 сессии подряд!',
     thisMonth: 'в этом месяце',
+    currentStatus: 'Текущий статус',
+    workingSets: 'Рабочие подходы',
+    volumeReduction: 'Облегчение объёма',
+    bestSession: 'Лучшая сессия',
+    noSessionsYet: 'Нет выполненных сессий',
     lastSession: 'Последняя сессия',
     
     // Settings
@@ -219,6 +224,11 @@ export const translations = {
     progressiveOverload: 'Progressive Overload',
     progressMessage: "You've increased weight 4 sessions in a row!",
     thisMonth: 'this month',
+    currentStatus: 'Current Status',
+    workingSets: 'Working Sets',
+    volumeReduction: 'Volume Reduction',
+    bestSession: 'Best Session',
+    noSessionsYet: 'No sessions yet',
     lastSession: 'Last session',
     
     // Settings
