@@ -218,7 +218,7 @@ export default function Exercise() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => navigate("/exercise-history")}
+              onClick={() => navigate(`/single-exercise-history?exercise=${sessionExercise.exercise.id}&se=${sessionExerciseId}`)}
             >
               <History className="h-5 w-5 text-muted-foreground" />
             </Button>
