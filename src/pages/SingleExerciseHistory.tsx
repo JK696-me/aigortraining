@@ -14,6 +14,8 @@ interface ExerciseState {
   current_working_weight: number;
   current_sets: number;
   volume_reduce_on: boolean;
+  last_target_range: string | null;
+  last_recommendation_text: string | null;
 }
 
 interface SessionHistoryItem {
@@ -64,7 +66,7 @@ export default function SingleExerciseHistory() {
       // Load exercise state
       const { data: stateData } = await supabase
         .from('exercise_state')
-        .select('current_working_weight, current_sets, volume_reduce_on')
+        .select('current_working_weight, current_sets, volume_reduce_on, last_target_range, last_recommendation_text')
         .eq('exercise_id', exerciseId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -212,6 +214,22 @@ export default function SingleExerciseHistory() {
                     </p>
                   </div>
                 </div>
+                
+                {/* Recommendation */}
+                {exerciseState.last_recommendation_text && (
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <p className="text-xs text-muted-foreground mb-1">{t('nextTimeRecommendation')}</p>
+                    {exerciseState.last_target_range && (
+                      <p className="text-sm text-foreground mb-1">
+                        <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
+                        <span className="font-mono">{exerciseState.last_target_range}</span>
+                      </p>
+                    )}
+                    <p className="text-sm text-muted-foreground">
+                      {exerciseState.last_recommendation_text}
+                    </p>
+                  </div>
+                )}
               </Card>
             )}
 

@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Minus, ChevronLeft, History, Lightbulb } from "lucide-react";
+import { Plus, Minus, ChevronLeft, History, Lightbulb, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useSets } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { calculateRecommendationAndUpdateState, ProgressionResult } from "@/lib/progression";
 
 const rpeDisplayScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -30,10 +33,13 @@ export default function Exercise() {
   const [searchParams] = useSearchParams();
   const sessionExerciseId = searchParams.get('se');
   const { t } = useLanguage();
+  const { user } = useAuth();
   
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
+  const [recommendation, setRecommendation] = useState<ProgressionResult | null>(null);
+  const [isFinishing, setIsFinishing] = useState(false);
   
   // Local state for inputs
   const [weightValue, setWeightValue] = useState('');
@@ -66,6 +72,39 @@ export default function Exercise() {
     
     loadData();
   }, [sessionExerciseId]);
+
+  // Load last recommendation from exercise_state
+  useEffect(() => {
+    if (!sessionExercise?.exercise?.id || !user) return;
+    
+    const loadRecommendation = async () => {
+      const { data } = await supabase
+        .from('exercise_state')
+        .select('current_working_weight, last_target_range, last_recommendation_text')
+        .eq('exercise_id', sessionExercise.exercise.id)
+        .eq('user_id', user.id)
+        .single();
+      
+      if (data && data.last_recommendation_text) {
+        setRecommendation({
+          nextWeight: data.current_working_weight,
+          targetRangeText: data.last_target_range || '',
+          explanation: data.last_recommendation_text,
+          updatedState: {
+            current_working_weight: data.current_working_weight,
+            current_sets: 0,
+            volume_reduce_on: false,
+            success_streak: 0,
+            fail_streak: 0,
+            last_target_range: data.last_target_range || '',
+            last_recommendation_text: data.last_recommendation_text,
+          },
+        });
+      }
+    };
+    
+    loadRecommendation();
+  }, [sessionExercise?.exercise?.id, user]);
 
   // Update local values when set changes
   const currentSet = sets[selectedSetIndex];
@@ -189,6 +228,31 @@ export default function Exercise() {
       saveReps(repsValue, false);
     }
     setSelectedSetIndex(index);
+  };
+
+  const handleFinishExercise = async () => {
+    if (!sessionExercise || !user || !sessionExerciseId) return;
+    
+    setIsFinishing(true);
+    try {
+      const result = await calculateRecommendationAndUpdateState(
+        sessionExercise.exercise.id,
+        sessionExerciseId,
+        user.id
+      );
+      
+      if (result) {
+        setRecommendation(result);
+      }
+      
+      toast.success(t('exerciseFinished'));
+      navigate(`/workout?session=${sessionExercise.session_id}`);
+    } catch (error) {
+      console.error('Failed to calculate progression:', error);
+      toast.error('Failed to calculate progression');
+    } finally {
+      setIsFinishing(false);
+    }
   };
 
   if (!sessionExerciseId || !sessionExercise) {
@@ -400,15 +464,42 @@ export default function Exercise() {
           </div>
         </div>
 
+        {/* Finish Exercise Button */}
+        <Button
+          onClick={handleFinishExercise}
+          disabled={isFinishing || sets.length === 0}
+          className="w-full h-14 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
+          size="lg"
+        >
+          <Check className="h-5 w-5 mr-2" />
+          {isFinishing ? t('calculating') : t('finishExercise')}
+        </Button>
+
         {/* Recommendation Card */}
         <Card className="p-4 bg-primary/10 border-primary/20">
           <div className="flex items-start gap-3">
             <Lightbulb className="h-5 w-5 text-primary mt-0.5" />
-            <div>
-              <h4 className="font-semibold text-foreground mb-1">{t('nextTimeRecommendation')}</h4>
-              <p className="text-sm text-muted-foreground">
-                {t('comingSoon')}
-              </p>
+            <div className="flex-1">
+              <h4 className="font-semibold text-foreground mb-2">{t('nextTimeRecommendation')}</h4>
+              {recommendation ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-foreground">
+                    <span className="text-muted-foreground">{t('recommendedWeight')}:</span>{' '}
+                    <span className="font-mono font-bold">{recommendation.nextWeight} {t('kg')}</span>
+                  </p>
+                  <p className="text-sm text-foreground">
+                    <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
+                    <span className="font-mono">{recommendation.targetRangeText}</span>
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {recommendation.explanation}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t('basedOnProgress')}
+                </p>
+              )}
             </div>
           </div>
         </Card>

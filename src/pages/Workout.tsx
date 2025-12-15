@@ -5,17 +5,20 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useSession, useSessionExercises } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { calculateProgressionForSession } from "@/lib/progression";
 
 export default function Workout() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get('session');
   const { t } = useLanguage();
+  const { user } = useAuth();
   
   const { data: session } = useSession(sessionId);
   const { exercises: sessionExercises, isLoading, addExercise } = useSessionExercises(sessionId);
@@ -99,10 +102,13 @@ export default function Workout() {
   };
 
   const handleFinishWorkout = async () => {
-    if (!sessionId) return;
+    if (!sessionId || !user) return;
     
     setIsFinishing(true);
     try {
+      // Calculate progression for all exercises in the session
+      await calculateProgressionForSession(sessionId, user.id);
+      
       // Update session status to completed
       const { error } = await supabase
         .from('sessions')

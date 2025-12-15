@@ -58,6 +58,12 @@ export const translations = {
     backToWorkout: 'К тренировке',
     setOf: 'Подход',
     of: 'из',
+    finishExercise: 'Завершить упражнение',
+    exerciseFinished: 'Упражнение завершено',
+    recommendedWeight: 'Рекомендованный вес',
+    targetRange: 'Цель: диапазон',
+    reason: 'Почему',
+    calculating: 'Рассчитывается...',
     
     // Exercise History
     exerciseHistory: 'История упражнения',
@@ -213,6 +219,12 @@ export const translations = {
     backToWorkout: 'Back to workout',
     setOf: 'Set',
     of: 'of',
+    finishExercise: 'Finish Exercise',
+    exerciseFinished: 'Exercise finished',
+    recommendedWeight: 'Recommended weight',
+    targetRange: 'Target range',
+    reason: 'Reason',
+    calculating: 'Calculating...',
     
     // Exercise History
     exerciseHistory: 'Exercise History',
