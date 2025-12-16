@@ -12,6 +12,8 @@ import Exercise from "./pages/Exercise";
 import ExerciseHistory from "./pages/ExerciseHistory";
 import SingleExerciseHistory from "./pages/SingleExerciseHistory";
 import ExercisesList from "./pages/ExercisesList";
+import Templates from "./pages/Templates";
+import TemplateEditor from "./pages/TemplateEditor";
 import Settings from "./pages/Settings";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -34,6 +36,8 @@ const App = () => (
               <Route path="/exercise-history" element={<ProtectedRoute><ExerciseHistory /></ProtectedRoute>} />
               <Route path="/single-exercise-history" element={<ProtectedRoute><SingleExerciseHistory /></ProtectedRoute>} />
               <Route path="/exercises" element={<ProtectedRoute><ExercisesList /></ProtectedRoute>} />
+              <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+              <Route path="/template-editor" element={<ProtectedRoute><TemplateEditor /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
