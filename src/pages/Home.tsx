@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play, RotateCcw, Plus, ChevronRight, Zap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,9 @@ import { useSessions } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { DraftRecoveryModal } from "@/components/DraftRecoveryModal";
+import { useDraftWorkout } from "@/hooks/useDraftWorkout";
+import { DraftWorkout, deleteDraft } from "@/lib/draftStorage";
 
 const mockTemplates = [
   { id: 1, name: "Push Day", exercises: 5, daysAgo: 2 },
@@ -22,6 +25,50 @@ export default function Home() {
   const { user } = useAuth();
   const { createSession, isCreating } = useSessions();
   const [isRepeating, setIsRepeating] = useState(false);
+  const [recoveryDraft, setRecoveryDraft] = useState<DraftWorkout | null>(null);
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+
+  const handleRecoveryNeeded = useCallback((draft: DraftWorkout) => {
+    setRecoveryDraft(draft);
+    setShowRecoveryModal(true);
+  }, []);
+
+  const { startNewWorkout, clearDraft, syncDraftToSupabase, continueDraft } = useDraftWorkout({
+    userId: user?.id,
+    onRecoveryNeeded: handleRecoveryNeeded,
+  });
+
+  const handleContinueDraft = async () => {
+    if (!recoveryDraft) return;
+    
+    setShowRecoveryModal(false);
+    
+    // If draft has session_id, navigate directly
+    if (recoveryDraft.session_id) {
+      navigate(`/workout?session=${recoveryDraft.session_id}`);
+    } else {
+      // Sync draft first to get session_id
+      continueDraft(recoveryDraft);
+      const synced = await syncDraftToSupabase();
+      if (synced && recoveryDraft.session_id) {
+        navigate(`/workout?session=${recoveryDraft.session_id}`);
+      }
+    }
+  };
+
+  const handleDiscardDraft = async () => {
+    if (!recoveryDraft || !user) return;
+    
+    // Delete draft session from Supabase if exists
+    if (recoveryDraft.session_id) {
+      await supabase.from('sessions').delete().eq('id', recoveryDraft.session_id);
+    }
+    
+    // Clear local draft
+    await deleteDraft(user.id);
+    setShowRecoveryModal(false);
+    setRecoveryDraft(null);
+  };
 
   const handleStartWorkout = async () => {
     try {
@@ -191,6 +238,14 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      {/* Draft Recovery Modal */}
+      <DraftRecoveryModal
+        draft={recoveryDraft}
+        isOpen={showRecoveryModal}
+        onContinue={handleContinueDraft}
+        onDiscard={handleDiscardDraft}
+      />
     </Layout>
   );
 }

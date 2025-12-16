@@ -9,15 +9,18 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSession, useSessionExercises } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { ExercisePicker } from "@/components/ExercisePicker";
+import { SyncIndicator } from "@/components/SyncIndicator";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
+import { useDraftWorkout } from "@/hooks/useDraftWorkout";
+import { deleteDraft } from "@/lib/draftStorage";
 
 export default function Workout() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get('session');
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const { user } = useAuth();
   
   const { data: session } = useSession(sessionId);
@@ -25,6 +28,10 @@ export default function Workout() {
   const [showPicker, setShowPicker] = useState(false);
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
+
+  const { syncState, isOnline, isSyncing, syncDraftToSupabase } = useDraftWorkout({
+    userId: user?.id,
+  });
 
   // Timer
   useEffect(() => {
@@ -120,6 +127,9 @@ export default function Workout() {
 
       if (error) throw error;
 
+      // Clear local draft
+      await deleteDraft(user.id);
+
       toast.success(t('workoutFinished'));
       navigate('/');
     } catch (error) {
@@ -153,9 +163,17 @@ export default function Workout() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-2xl font-bold text-foreground">{t('currentWorkout')}</h1>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Timer className="h-4 w-4" />
-              <span className="text-sm font-mono">{formatTime(workoutTime)}</span>
+            <div className="flex items-center gap-3">
+              <SyncIndicator
+                syncState={syncState}
+                isOnline={isOnline}
+                isSyncing={isSyncing}
+                onSync={syncDraftToSupabase}
+              />
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Timer className="h-4 w-4" />
+                <span className="text-sm font-mono">{formatTime(workoutTime)}</span>
+              </div>
             </div>
           </div>
           <span className="text-sm text-muted-foreground">
@@ -223,6 +241,15 @@ export default function Workout() {
             {t('finishWorkout')}
           </Button>
         </div>
+
+        {/* Exit hint */}
+        {syncState === 'dirty' && (
+          <p className="text-xs text-center text-muted-foreground mt-4">
+            {locale === 'ru' 
+              ? 'Тренировка сохранена как черновик и будет восстановлена при следующем запуске.'
+              : 'Workout saved as draft and will be restored on next launch.'}
+          </p>
+        )}
       </div>
 
       {/* Exercise Picker */}
