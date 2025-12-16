@@ -1,13 +1,31 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight } from "lucide-react";
+import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
+import { toast } from 'sonner';
 
 interface CompletedSession {
   id: string;
@@ -31,6 +49,9 @@ export default function ExerciseHistory() {
   const [sessions, setSessions] = useState<CompletedSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<CompletedSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Load completed sessions
   useEffect(() => {
@@ -117,19 +138,75 @@ export default function ExerciseHistory() {
     return session.exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
   };
 
+  const handleDeleteClick = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setSessionToDelete(sessionId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!sessionToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      // CASCADE will automatically delete session_exercises and sets
+      const { error } = await supabase
+        .from('sessions')
+        .delete()
+        .eq('id', sessionToDelete);
+
+      if (error) throw error;
+
+      // Update local state
+      setSessions(prev => prev.filter(s => s.id !== sessionToDelete));
+      
+      // If viewing deleted session details, go back to list
+      if (selectedSession?.id === sessionToDelete) {
+        setSelectedSession(null);
+      }
+      
+      toast.success('Тренировка удалена');
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      toast.error('Ошибка удаления');
+    } finally {
+      setIsDeleting(false);
+      setDeleteDialogOpen(false);
+      setSessionToDelete(null);
+    }
+  };
+
   // Session Details View
   if (selectedSession) {
     return (
       <Layout>
         <div className="px-4 pt-12 safe-top pb-24">
           <div className="mb-6">
-            <button
-              onClick={() => setSelectedSession(null)}
-              className="flex items-center gap-1 text-muted-foreground mb-3"
-            >
-              <ChevronLeft className="h-5 w-5" />
-              <span className="text-sm">{t('back')}</span>
-            </button>
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => setSelectedSession(null)}
+                className="flex items-center gap-1 text-muted-foreground"
+              >
+                <ChevronLeft className="h-5 w-5" />
+                <span className="text-sm">{t('back')}</span>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-5 w-5 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={(e) => handleDeleteClick(e, selectedSession.id)}
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Удалить тренировку
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <h1 className="text-2xl font-bold text-foreground">{t('workoutDetails')}</h1>
             <p className="text-muted-foreground">
               {formatSessionDate(selectedSession.completed_at)}
@@ -187,6 +264,28 @@ export default function ExerciseHistory() {
             ))}
           </div>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Удалить тренировку?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Будут удалены все упражнения и подходы этой тренировки. Действие нельзя отменить.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isDeleting ? 'Удаление...' : 'Удалить'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Layout>
     );
   }
@@ -219,7 +318,7 @@ export default function ExerciseHistory() {
                 onClick={() => setSelectedSession(session)}
               >
                 <div className="flex items-center justify-between">
-                  <div>
+                  <div className="flex-1 min-w-0">
                     <p className="font-semibold text-foreground">
                       {formatSessionDate(session.completed_at)}
                     </p>
@@ -231,13 +330,53 @@ export default function ExerciseHistory() {
                       <span>{calculateDuration(session)} {t('minutes')}</span>
                     </div>
                   </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  <div className="flex items-center gap-1">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={(e) => handleDeleteClick(e, session.id)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Удалить тренировку
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  </div>
                 </div>
               </Card>
             ))}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить тренировку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Будут удалены все упражнения и подходы этой тренировки. Действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Удаление...' : 'Удалить'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }
