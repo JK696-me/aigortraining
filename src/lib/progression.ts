@@ -29,10 +29,15 @@ const DEFAULT_REP_RANGE = {
   stage2: { min: 8, max: 12, displayText: '8–12 (цель 10–12)' }
 }
 
-export interface ProgressionResult {
+export type PreviewAction = 'increase' | 'hold' | 'stage_up' | 'lock_in' | 'volume_reduce_on' | 'volume_reduce_off'
+
+export interface ProgressionPreview {
   nextWeight: number
   targetRangeText: string
+  repStage: number
+  action: PreviewAction
   explanation: string
+  // Full state for apply
   updatedState: {
     current_working_weight: number
     current_sets: number
@@ -45,13 +50,7 @@ export interface ProgressionResult {
   }
 }
 
-interface ExerciseData {
-  id: string
-  type: number
-  increment_value: number
-}
-
-interface ExerciseStateData {
+export interface ExerciseStateSnapshot {
   id: string
   current_working_weight: number
   current_sets: number
@@ -60,6 +59,14 @@ interface ExerciseStateData {
   success_streak: number
   fail_streak: number
   rep_stage: number
+  last_target_range: string | null
+  last_recommendation_text: string | null
+}
+
+interface ExerciseData {
+  id: string
+  type: number
+  increment_value: number
 }
 
 interface SetData {
@@ -68,11 +75,12 @@ interface SetData {
   set_index: number
 }
 
-export async function calculateRecommendationAndUpdateState(
+// PREVIEW: Calculate recommendation without saving to DB
+export async function calculateRecommendationPreview(
   exerciseId: string,
   sessionExerciseId: string,
   userId: string
-): Promise<ProgressionResult | null> {
+): Promise<{ preview: ProgressionPreview; currentState: ExerciseStateSnapshot } | null> {
   // 1. Load exercise data
   const { data: exercise } = await supabase
     .from('exercises')
@@ -110,39 +118,64 @@ export async function calculateRecommendationAndUpdateState(
 
   const rpe = sessionExercise?.rpe ?? null
 
-  // 5. Calculate progression
-  const result = calculateProgression(
+  // 5. Calculate progression (preview only, no DB writes)
+  const preview = calculateProgressionInternal(
     exercise as ExerciseData,
-    exerciseState as ExerciseStateData,
+    exerciseState as ExerciseStateSnapshot,
     sets as SetData[],
     rpe
   )
 
-  // 6. Save updated state
-  await supabase
-    .from('exercise_state')
-    .update({
-      current_working_weight: result.updatedState.current_working_weight,
-      current_sets: result.updatedState.current_sets,
-      volume_reduce_on: result.updatedState.volume_reduce_on,
-      success_streak: result.updatedState.success_streak,
-      fail_streak: result.updatedState.fail_streak,
-      last_target_range: result.updatedState.last_target_range,
-      last_recommendation_text: result.updatedState.last_recommendation_text,
-      rep_stage: result.updatedState.rep_stage,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', exerciseState.id)
-
-  return result
+  return { 
+    preview, 
+    currentState: exerciseState as ExerciseStateSnapshot 
+  }
 }
 
-function calculateProgression(
+// APPLY: Save preview to DB
+export async function applyRecommendation(
+  exerciseStateId: string,
+  preview: ProgressionPreview
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('exercise_state')
+    .update({
+      current_working_weight: preview.updatedState.current_working_weight,
+      current_sets: preview.updatedState.current_sets,
+      volume_reduce_on: preview.updatedState.volume_reduce_on,
+      success_streak: preview.updatedState.success_streak,
+      fail_streak: preview.updatedState.fail_streak,
+      last_target_range: preview.updatedState.last_target_range,
+      last_recommendation_text: preview.updatedState.last_recommendation_text,
+      rep_stage: preview.updatedState.rep_stage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', exerciseStateId)
+
+  return !error
+}
+
+// Check if preview differs from saved state
+export function isPreviewDifferent(
+  preview: ProgressionPreview,
+  currentState: ExerciseStateSnapshot
+): boolean {
+  return (
+    preview.updatedState.current_working_weight !== currentState.current_working_weight ||
+    preview.updatedState.rep_stage !== currentState.rep_stage ||
+    preview.updatedState.current_sets !== currentState.current_sets ||
+    preview.updatedState.volume_reduce_on !== currentState.volume_reduce_on ||
+    preview.updatedState.success_streak !== currentState.success_streak ||
+    preview.updatedState.fail_streak !== currentState.fail_streak
+  )
+}
+
+function calculateProgressionInternal(
   exercise: ExerciseData,
-  state: ExerciseStateData,
+  state: ExerciseStateSnapshot,
   sets: SetData[],
   rpe: number | null
-): ProgressionResult {
+): ProgressionPreview {
   const repRanges = REP_RANGES[exercise.type] || DEFAULT_REP_RANGE
   const currentStage = state.rep_stage || 1
   const currentRange = currentStage === 1 ? repRanges.stage1 : repRanges.stage2
@@ -158,6 +191,8 @@ function calculateProgression(
     return {
       nextWeight: state.current_working_weight,
       targetRangeText,
+      repStage: currentStage,
+      action: 'hold',
       explanation: 'Нет данных о подходах.',
       updatedState: {
         current_working_weight: state.current_working_weight,
@@ -184,7 +219,7 @@ function calculateProgression(
   // Failure = any set below min OR RPE >= 8.5
   const isFailure = anyBelowMin || rpeHigh
 
-  // Initialize updated state
+  // Initialize updated state from current
   let newFailStreak = state.fail_streak
   let newSuccessStreak = state.success_streak
   let newVolumeReduceOn = state.volume_reduce_on
@@ -192,6 +227,7 @@ function calculateProgression(
   let newRepStage = currentStage
   let nextWeight = currentWeight
   let explanation = ''
+  let action: PreviewAction = 'hold'
 
   // Update streaks based on success/failure
   if (isFailure) {
@@ -209,16 +245,19 @@ function calculateProgression(
       // Move to stage 2, don't increase weight
       newRepStage = 2
       nextWeight = currentWeight
+      action = 'stage_up'
       explanation = 'Верх базового диапазона выполнен — переходим на добор повторов без повышения веса.'
     } else if (allAtOrAboveMax && rpeHigh) {
       // Stay in stage 1, RPE too high
       newRepStage = 1
       nextWeight = currentWeight
+      action = 'lock_in'
       explanation = 'Верх выполнен, но RPE высокий — закрепляем в базовом диапазоне.'
     } else {
       // Reps not reached
       newRepStage = 1
       nextWeight = currentWeight
+      action = 'hold'
       explanation = 'Добираем повторы в базовом диапазоне, вес сохраняем.'
     }
   } else {
@@ -227,27 +266,31 @@ function calculateProgression(
       // Increase weight and reset to stage 1
       nextWeight = currentWeight + incrementValue
       newRepStage = 1
+      action = 'increase'
       explanation = 'Верх расширенного диапазона выполнен и RPE ≤ 8 — увеличиваем вес и возвращаемся в базовый диапазон.'
     } else if (allAtOrAboveMax && rpeHigh) {
       // Stay in stage 2, RPE too high
       nextWeight = currentWeight
       newRepStage = 2
+      action = 'lock_in'
       explanation = 'Верх расширенного диапазона выполнен, но RPE высокий — закрепляем.'
     } else {
       // Reps not reached
       nextWeight = currentWeight
       newRepStage = 2
+      action = 'hold'
       explanation = 'Добираем повторы в расширенном диапазоне, вес сохраняем.'
     }
   }
 
-  // Volume reduction logic (same as before)
+  // Volume reduction logic
   // Enable volume reduction if 2 failures in a row
   if (newFailStreak >= 2 && !newVolumeReduceOn) {
     newVolumeReduceOn = true
     newCurrentSets = Math.max(state.base_sets - 1, 1)
     newFailStreak = 0
     newSuccessStreak = 0
+    action = 'volume_reduce_on'
     explanation += ' 2 сбоя подряд — уменьшаем объём на 1 подход.'
   }
 
@@ -257,6 +300,7 @@ function calculateProgression(
     newCurrentSets = state.base_sets
     newSuccessStreak = 0
     newFailStreak = 0
+    action = 'volume_reduce_off'
     explanation += ' 2 успешные тренировки подряд — возвращаем исходный объём.'
   }
 
@@ -267,6 +311,8 @@ function calculateProgression(
   return {
     nextWeight,
     targetRangeText,
+    repStage: newRepStage,
+    action,
     explanation: explanation.trim(),
     updatedState: {
       current_working_weight: nextWeight,
@@ -279,6 +325,19 @@ function calculateProgression(
       rep_stage: newRepStage,
     },
   }
+}
+
+// Legacy function for backward compatibility (used by Workout page for auto-finish)
+export async function calculateRecommendationAndUpdateState(
+  exerciseId: string,
+  sessionExerciseId: string,
+  userId: string
+): Promise<ProgressionPreview | null> {
+  const result = await calculateRecommendationPreview(exerciseId, sessionExerciseId, userId)
+  if (!result) return null
+  
+  await applyRecommendation(result.currentState.id, result.preview)
+  return result.preview
 }
 
 // Calculate for all exercises in a session

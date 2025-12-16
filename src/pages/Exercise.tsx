@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Minus, ChevronLeft, History, Lightbulb, Check } from "lucide-react";
+import { Plus, Minus, ChevronLeft, History, Lightbulb, Check, Copy, Grid } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSets } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { calculateRecommendationAndUpdateState, ProgressionResult } from "@/lib/progression";
+import { 
+  calculateRecommendationPreview, 
+  applyRecommendation, 
+  isPreviewDifferent,
+  ProgressionPreview,
+  ExerciseStateSnapshot 
+} from "@/lib/progression";
 
 const rpeDisplayScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -28,6 +34,23 @@ interface SessionExerciseData {
   };
 }
 
+// Debounce hook
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 export default function Exercise() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -38,8 +61,13 @@ export default function Exercise() {
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
-  const [recommendation, setRecommendation] = useState<ProgressionResult | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  
+  // Preview state
+  const [preview, setPreview] = useState<ProgressionPreview | null>(null);
+  const [exerciseState, setExerciseState] = useState<ExerciseStateSnapshot | null>(null);
+  const [previewTrigger, setPreviewTrigger] = useState(0);
   
   // Local state for inputs
   const [weightValue, setWeightValue] = useState('');
@@ -48,7 +76,10 @@ export default function Exercise() {
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
   
-  const { sets, updateSet, addSet, isLoading } = useSets(sessionExerciseId);
+  const { sets, updateSet, addSet, isLoading, refetch: refetchSets } = useSets(sessionExerciseId);
+
+  // Debounced preview trigger
+  const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
   // Load session exercise data
   useEffect(() => {
@@ -73,39 +104,36 @@ export default function Exercise() {
     loadData();
   }, [sessionExerciseId]);
 
-  // Load last recommendation from exercise_state
+  // Load preview on trigger change (debounced)
   useEffect(() => {
-    if (!sessionExercise?.exercise?.id || !user) return;
+    if (!sessionExercise?.exercise?.id || !user || !sessionExerciseId) return;
     
-    const loadRecommendation = async () => {
-      const { data } = await supabase
-        .from('exercise_state')
-        .select('current_working_weight, last_target_range, last_recommendation_text, rep_stage')
-        .eq('exercise_id', sessionExercise.exercise.id)
-        .eq('user_id', user.id)
-        .single();
+    const loadPreview = async () => {
+      const result = await calculateRecommendationPreview(
+        sessionExercise.exercise.id,
+        sessionExerciseId,
+        user.id
+      );
       
-      if (data && data.last_recommendation_text) {
-        setRecommendation({
-          nextWeight: data.current_working_weight,
-          targetRangeText: data.last_target_range || '',
-          explanation: data.last_recommendation_text,
-          updatedState: {
-            current_working_weight: data.current_working_weight,
-            current_sets: 0,
-            volume_reduce_on: false,
-            success_streak: 0,
-            fail_streak: 0,
-            last_target_range: data.last_target_range || '',
-            last_recommendation_text: data.last_recommendation_text,
-            rep_stage: data.rep_stage || 1,
-          },
-        });
+      if (result) {
+        setPreview(result.preview);
+        setExerciseState(result.currentState);
       }
     };
     
-    loadRecommendation();
-  }, [sessionExercise?.exercise?.id, user]);
+    loadPreview();
+  }, [sessionExercise?.exercise?.id, user, sessionExerciseId, debouncedPreviewTrigger]);
+
+  // Check if preview is different from saved state
+  const canApply = useMemo(() => {
+    if (!preview || !exerciseState) return false;
+    return isPreviewDifferent(preview, exerciseState);
+  }, [preview, exerciseState]);
+
+  // Trigger preview recalculation
+  const triggerPreviewUpdate = useCallback(() => {
+    setPreviewTrigger(prev => prev + 1);
+  }, []);
 
   // Update local values when set changes
   const currentSet = sets[selectedSetIndex];
@@ -141,7 +169,8 @@ export default function Exercise() {
     const roundedValue = Math.round(numValue * 2) / 2;
     setWeightValue(roundedValue.toString());
     updateSet({ setId: currentSet.id, updates: { weight: roundedValue } });
-  }, [currentSet, updateSet]);
+    triggerPreviewUpdate();
+  }, [currentSet, updateSet, triggerPreviewUpdate]);
 
   // Save reps and move to next set
   const saveReps = useCallback((value: string, moveToNext: boolean = false) => {
@@ -153,12 +182,13 @@ export default function Exercise() {
     }
     setRepsValue(numValue.toString());
     updateSet({ setId: currentSet.id, updates: { reps: numValue } });
+    triggerPreviewUpdate();
     
     // Move to next set if available
     if (moveToNext && selectedSetIndex < sets.length - 1) {
       setSelectedSetIndex(selectedSetIndex + 1);
     }
-  }, [currentSet, updateSet, selectedSetIndex, sets.length]);
+  }, [currentSet, updateSet, selectedSetIndex, sets.length, triggerPreviewUpdate]);
 
   const handleWeightChange = (delta: number) => {
     const currentValue = parseFloat(weightValue) || 0;
@@ -167,6 +197,7 @@ export default function Exercise() {
     setWeightValue(roundedValue.toString());
     if (currentSet) {
       updateSet({ setId: currentSet.id, updates: { weight: roundedValue } });
+      triggerPreviewUpdate();
     }
   };
 
@@ -176,6 +207,7 @@ export default function Exercise() {
     setRepsValue(newValue.toString());
     if (currentSet) {
       updateSet({ setId: currentSet.id, updates: { reps: newValue } });
+      triggerPreviewUpdate();
     }
   };
 
@@ -198,6 +230,7 @@ export default function Exercise() {
       weight: lastSet?.weight || 0,
       reps: lastSet?.reps || 8,
     });
+    triggerPreviewUpdate();
     // Switch to new set after a short delay
     setTimeout(() => {
       setSelectedSetIndex(sets.length);
@@ -212,6 +245,8 @@ export default function Exercise() {
       .from('session_exercises')
       .update({ rpe })
       .eq('id', sessionExerciseId);
+    
+    triggerPreviewUpdate();
   };
 
   const handleQuickAddRep = () => {
@@ -231,28 +266,142 @@ export default function Exercise() {
     setSelectedSetIndex(index);
   };
 
+  // Apply recommendation to DB
+  const handleApplyRecommendation = async () => {
+    if (!preview || !exerciseState) return;
+    
+    setIsApplying(true);
+    try {
+      const success = await applyRecommendation(exerciseState.id, preview);
+      if (success) {
+        // Update local state to reflect applied changes
+        setExerciseState(prev => prev ? {
+          ...prev,
+          current_working_weight: preview.updatedState.current_working_weight,
+          current_sets: preview.updatedState.current_sets,
+          volume_reduce_on: preview.updatedState.volume_reduce_on,
+          success_streak: preview.updatedState.success_streak,
+          fail_streak: preview.updatedState.fail_streak,
+          rep_stage: preview.updatedState.rep_stage,
+          last_target_range: preview.updatedState.last_target_range,
+          last_recommendation_text: preview.updatedState.last_recommendation_text,
+        } : null);
+        toast.success('Сохранено');
+      } else {
+        toast.error('Ошибка сохранения');
+      }
+    } catch (error) {
+      console.error('Failed to apply recommendation:', error);
+      toast.error('Ошибка сохранения');
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
+  // Finish exercise: apply if needed, then navigate
   const handleFinishExercise = async () => {
-    if (!sessionExercise || !user || !sessionExerciseId) return;
+    if (!sessionExercise || !user || !sessionExerciseId || !exerciseState) return;
     
     setIsFinishing(true);
     try {
-      const result = await calculateRecommendationAndUpdateState(
-        sessionExercise.exercise.id,
-        sessionExerciseId,
-        user.id
-      );
-      
-      if (result) {
-        setRecommendation(result);
+      // Apply current preview if different
+      if (preview && isPreviewDifferent(preview, exerciseState)) {
+        await applyRecommendation(exerciseState.id, preview);
       }
       
       toast.success(t('exerciseFinished'));
       navigate(`/workout?session=${sessionExercise.session_id}`);
     } catch (error) {
-      console.error('Failed to calculate progression:', error);
-      toast.error('Failed to calculate progression');
+      console.error('Failed to finish exercise:', error);
+      toast.error('Ошибка');
     } finally {
       setIsFinishing(false);
+    }
+  };
+
+  // Copy last attempt
+  const handleCopyLastAttempt = async () => {
+    if (!sessionExercise?.exercise?.id || !user) return;
+    
+    try {
+      // Find the last completed session with this exercise
+      const { data: lastSessionExercise } = await supabase
+        .from('session_exercises')
+        .select(`
+          id,
+          session:sessions!inner(id, status, completed_at)
+        `)
+        .eq('exercise_id', sessionExercise.exercise.id)
+        .eq('sessions.status', 'completed')
+        .neq('id', sessionExerciseId) // Exclude current
+        .order('sessions(completed_at)', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!lastSessionExercise) {
+        toast.error('Нет предыдущих тренировок');
+        return;
+      }
+      
+      // Get sets from last session
+      const { data: lastSets } = await supabase
+        .from('sets')
+        .select('weight, reps, set_index')
+        .eq('session_exercise_id', lastSessionExercise.id)
+        .order('set_index');
+      
+      if (!lastSets || lastSets.length === 0) {
+        toast.error('Нет данных о подходах');
+        return;
+      }
+      
+      // Update current sets with last session's values
+      for (const currentSetItem of sets) {
+        const lastSet = lastSets.find(s => s.set_index === currentSetItem.set_index);
+        if (lastSet) {
+          await supabase
+            .from('sets')
+            .update({ weight: lastSet.weight, reps: lastSet.reps })
+            .eq('id', currentSetItem.id);
+        }
+      }
+      
+      // Refetch sets
+      refetchSets();
+      triggerPreviewUpdate();
+      toast.success('Скопировано из прошлой тренировки');
+    } catch (error) {
+      console.error('Failed to copy last attempt:', error);
+      toast.error('Ошибка копирования');
+    }
+  };
+
+  // Fill all sets like current
+  const handleFillAllSets = async () => {
+    if (!currentSet || !exerciseState) return;
+    
+    const workingSetsCount = exerciseState.current_sets;
+    const weight = parseFloat(weightValue) || currentSet.weight;
+    const reps = parseInt(repsValue, 10) || currentSet.reps;
+    
+    try {
+      // Update all working sets (first N sets by set_index)
+      for (const setItem of sets) {
+        if (setItem.set_index <= workingSetsCount) {
+          await supabase
+            .from('sets')
+            .update({ weight, reps })
+            .eq('id', setItem.id);
+        }
+      }
+      
+      // Refetch sets
+      refetchSets();
+      triggerPreviewUpdate();
+      toast.success('Все подходы заполнены');
+    } catch (error) {
+      console.error('Failed to fill all sets:', error);
+      toast.error('Ошибка заполнения');
     }
   };
 
@@ -414,7 +563,7 @@ export default function Exercise() {
         )}
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
+        <div className="grid grid-cols-2 gap-3 mb-4">
           <Button 
             variant="secondary" 
             className="h-14 text-base font-medium"
@@ -430,6 +579,26 @@ export default function Exercise() {
           >
             <Plus className="h-4 w-4 mr-2" />
             +{incrementValue} {t('kg')}
+          </Button>
+        </div>
+
+        {/* Quick Fill Buttons */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <Button 
+            variant="outline" 
+            className="h-12 text-sm font-medium"
+            onClick={handleCopyLastAttempt}
+          >
+            <Copy className="h-4 w-4 mr-2" />
+            Скопировать прошлую
+          </Button>
+          <Button 
+            variant="outline" 
+            className="h-12 text-sm font-medium"
+            onClick={handleFillAllSets}
+          >
+            <Grid className="h-4 w-4 mr-2" />
+            Заполнить все
           </Button>
         </div>
 
@@ -465,45 +634,53 @@ export default function Exercise() {
           </div>
         </div>
 
+        {/* Recommendation Card (Live Preview) */}
+        <Card className="p-4 bg-primary/10 border-primary/20 mb-6">
+          <div className="flex items-start gap-3">
+            <Lightbulb className="h-5 w-5 text-primary mt-0.5" />
+            <div className="flex-1">
+              <h4 className="font-semibold text-foreground mb-2">{t('nextTimeRecommendation')}</h4>
+              {preview ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-foreground">
+                    <span className="text-muted-foreground">{t('recommendedWeight')}:</span>{' '}
+                    <span className="font-mono font-bold">{preview.nextWeight} {t('kg')}</span>
+                  </p>
+                  <p className="text-sm text-foreground">
+                    <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
+                    <span className="font-mono font-bold">{preview.targetRangeText}</span>
+                  </p>
+                  <p className="text-sm text-muted-foreground">{preview.explanation}</p>
+                  
+                  {/* Apply Button */}
+                  <Button
+                    onClick={handleApplyRecommendation}
+                    disabled={!canApply || isApplying}
+                    variant={canApply ? "default" : "secondary"}
+                    className="w-full mt-3"
+                    size="sm"
+                  >
+                    <Check className="h-4 w-4 mr-2" />
+                    {isApplying ? 'Сохраняем...' : canApply ? 'Применить рекомендацию' : 'Уже применено'}
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Завершите подход для расчёта рекомендации</p>
+              )}
+            </div>
+          </div>
+        </Card>
+
         {/* Finish Exercise Button */}
         <Button
           onClick={handleFinishExercise}
           disabled={isFinishing || sets.length === 0}
-          className="w-full h-14 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
+          className="w-full h-14 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
           size="lg"
         >
           <Check className="h-5 w-5 mr-2" />
           {isFinishing ? t('calculating') : t('finishExercise')}
         </Button>
-
-        {/* Recommendation Card */}
-        <Card className="p-4 bg-primary/10 border-primary/20">
-          <div className="flex items-start gap-3">
-            <Lightbulb className="h-5 w-5 text-primary mt-0.5" />
-            <div className="flex-1">
-              <h4 className="font-semibold text-foreground mb-2">{t('nextTimeRecommendation')}</h4>
-              {recommendation ? (
-                <div className="space-y-2">
-                  <p className="text-sm text-foreground">
-                    <span className="text-muted-foreground">{t('recommendedWeight')}:</span>{' '}
-                    <span className="font-mono font-bold">{recommendation.nextWeight} {t('kg')}</span>
-                  </p>
-                  <p className="text-sm text-foreground">
-                    <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
-                    <span className="font-mono">{recommendation.targetRangeText}</span>
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {recommendation.explanation}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  {t('basedOnProgress')}
-                </p>
-              )}
-            </div>
-          </div>
-        </Card>
       </div>
     </Layout>
   );
