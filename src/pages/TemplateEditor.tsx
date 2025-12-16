@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Trash2, ChevronUp, ChevronDown, Dumbbell, Loader2 } from "lucide-react";
+import { ChevronLeft, Plus, Trash2, ChevronUp, ChevronDown, Dumbbell, Loader2, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,12 +18,15 @@ import {
 import { useTemplate, useTemplateItems, useTemplates } from "@/hooks/useTemplates";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { Exercise } from "@/hooks/useExercises";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export default function TemplateEditor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const templateId = searchParams.get('id');
+  const { user } = useAuth();
   
   const { data: template, isLoading: isLoadingTemplate } = useTemplate(templateId);
   const { items, isLoading: isLoadingItems, addItem, updateItem, deleteItem, reorderItems, isAdding } = useTemplateItems(templateId);
@@ -32,6 +35,7 @@ export default function TemplateEditor() {
   const [templateName, setTemplateName] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
 
   useEffect(() => {
     if (template) {
@@ -116,6 +120,94 @@ export default function TemplateEditor() {
     } catch (error) {
       console.error('Failed to delete template:', error);
       toast.error('Ошибка удаления');
+    }
+  };
+
+  const handleStartWorkout = async () => {
+    if (!templateId || !user || items.length === 0) {
+      toast.error('Добавьте упражнения в шаблон');
+      return;
+    }
+
+    setIsStarting(true);
+    try {
+      // Create session from template
+      const { data: session, error: sessionError } = await supabase
+        .from('sessions')
+        .insert({
+          user_id: user.id,
+          date: new Date().toISOString(),
+          source: 'template',
+          template_id: templateId,
+          status: 'draft',
+        })
+        .select()
+        .single();
+
+      if (sessionError) throw sessionError;
+
+      // Create session exercises from template items
+      for (const item of items) {
+        // Get last completed session's sets for this exercise
+        const { data: lastSessionExercise } = await supabase
+          .from('session_exercises')
+          .select(`
+            id,
+            session:sessions!inner(status)
+          `)
+          .eq('exercise_id', item.exercise_id)
+          .eq('sessions.status', 'completed')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        let lastWeight = 0;
+        let lastReps = item.exercise?.type && item.exercise.type <= 2 ? 6 : 10;
+
+        if (lastSessionExercise) {
+          const { data: lastSets } = await supabase
+            .from('sets')
+            .select('weight, reps')
+            .eq('session_exercise_id', lastSessionExercise.id)
+            .order('set_index')
+            .limit(1);
+
+          if (lastSets && lastSets.length > 0) {
+            lastWeight = lastSets[0].weight;
+            lastReps = lastSets[0].reps;
+          }
+        }
+
+        // Create session exercise
+        const { data: newSe, error: seError } = await supabase
+          .from('session_exercises')
+          .insert({
+            session_id: session.id,
+            exercise_id: item.exercise_id,
+          })
+          .select()
+          .single();
+
+        if (seError) throw seError;
+
+        // Create sets based on target_sets
+        const sets = Array.from({ length: item.target_sets }, (_, i) => ({
+          session_exercise_id: newSe.id,
+          set_index: i + 1,
+          weight: lastWeight,
+          reps: lastReps,
+        }));
+
+        await supabase.from('sets').insert(sets);
+      }
+
+      toast.success('Тренировка создана');
+      navigate(`/workout?session=${session.id}`);
+    } catch (error) {
+      console.error('Failed to start workout:', error);
+      toast.error('Ошибка создания тренировки');
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -263,6 +355,21 @@ export default function TemplateEditor() {
             Добавить упражнение
           </Button>
         </div>
+
+        {/* Start Workout Button */}
+        <Button
+          onClick={handleStartWorkout}
+          disabled={isStarting || items.length === 0}
+          className="w-full h-14 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
+          size="lg"
+        >
+          {isStarting ? (
+            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+          ) : (
+            <Play className="h-5 w-5 mr-2" />
+          )}
+          Начать тренировку
+        </Button>
 
         {/* Danger Zone */}
         <Card className="p-4 bg-card border-destructive/30">
