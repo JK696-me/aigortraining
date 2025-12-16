@@ -253,13 +253,29 @@ export function useSets(sessionExerciseId: string | null) {
     },
   });
 
+  const deleteSet = useMutation({
+    mutationFn: async (setId: string) => {
+      const { error } = await supabase
+        .from('sets')
+        .delete()
+        .eq('id', setId);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+    },
+  });
+
   return {
     sets,
     isLoading,
     updateSet: updateSet.mutate,
     addSet: addSet.mutate,
+    deleteSet: deleteSet.mutate,
     isUpdating: updateSet.isPending,
     isAdding: addSet.isPending,
+    isDeleting: deleteSet.isPending,
     refetch,
   };
 }

@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSets } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { SwipeableSetItem } from "@/components/SwipeableSetItem";
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -76,7 +77,7 @@ export default function Exercise() {
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
   
-  const { sets, updateSet, addSet, isLoading, refetch: refetchSets } = useSets(sessionExerciseId);
+  const { sets, updateSet, addSet, deleteSet, isLoading, refetch: refetchSets } = useSets(sessionExerciseId);
 
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
@@ -615,21 +616,30 @@ export default function Exercise() {
 
         {/* All Sets Summary */}
         <div className="mb-6">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">{t('previousSets')}</h3>
+          <h3 className="text-sm font-medium text-muted-foreground mb-3">
+            {t('previousSets')} <span className="text-xs opacity-60">(свайп влево для удаления)</span>
+          </h3>
           <div className="space-y-2">
             {sets.map((set, index) => (
-              <button
+              <SwipeableSetItem
                 key={set.id}
-                onClick={() => handleSetSelect(index)}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-lg transition-colors ${
-                  index === selectedSetIndex ? 'bg-primary/20' : 'bg-secondary/50'
-                }`}
-              >
-                <span className="text-sm text-muted-foreground">{t('set')} {set.set_index}</span>
-                <span className="font-mono font-medium text-foreground">
-                  {set.weight}{t('kg')} × {set.reps}
-                </span>
-              </button>
+                setIndex={set.set_index}
+                weight={set.weight}
+                reps={set.reps}
+                isSelected={index === selectedSetIndex}
+                onSelect={() => handleSetSelect(index)}
+                onDelete={() => {
+                  deleteSet(set.id);
+                  // Adjust selected index if needed
+                  if (selectedSetIndex >= sets.length - 1 && selectedSetIndex > 0) {
+                    setSelectedSetIndex(selectedSetIndex - 1);
+                  }
+                  triggerPreviewUpdate();
+                  toast.success('Подход удалён');
+                }}
+                kgLabel={t('kg')}
+                setLabel={t('set')}
+              />
             ))}
           </div>
         </div>
