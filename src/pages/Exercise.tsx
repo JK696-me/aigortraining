@@ -80,7 +80,7 @@ export default function Exercise() {
     const loadRecommendation = async () => {
       const { data } = await supabase
         .from('exercise_state')
-        .select('current_working_weight, last_target_range, last_recommendation_text')
+        .select('current_working_weight, last_target_range, last_recommendation_text, rep_stage')
         .eq('exercise_id', sessionExercise.exercise.id)
         .eq('user_id', user.id)
         .single();
@@ -98,6 +98,7 @@ export default function Exercise() {
             fail_streak: 0,
             last_target_range: data.last_target_range || '',
             last_recommendation_text: data.last_recommendation_text,
+            rep_stage: data.rep_stage || 1,
           },
         });
       }

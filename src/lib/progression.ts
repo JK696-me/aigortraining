@@ -1,50 +1,71 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client"
 
-// Rep ranges by exercise type
-const REP_RANGES: Record<number, { lower: number; upper: number; extendedUpper: string }> = {
-  1: { lower: 6, upper: 8, extendedUpper: '10-12' },
-  2: { lower: 6, upper: 8, extendedUpper: '12' },
-  3: { lower: 10, upper: 12, extendedUpper: '15' },
-  4: { lower: 10, upper: 12, extendedUpper: '15-20' },
-};
+// Two-stage rep ranges by exercise type
+// Stage 1 = base range, Stage 2 = extended range (before weight increase)
+const REP_RANGES: Record<number, { 
+  stage1: { min: number; max: number; displayText: string };
+  stage2: { min: number; max: number; displayText: string };
+}> = {
+  1: { 
+    stage1: { min: 6, max: 8, displayText: '6–8' },
+    stage2: { min: 8, max: 12, displayText: '8–12 (цель 10–12)' }
+  },
+  2: { 
+    stage1: { min: 6, max: 8, displayText: '6–8' },
+    stage2: { min: 8, max: 12, displayText: '8–12' }
+  },
+  3: { 
+    stage1: { min: 10, max: 12, displayText: '10–12' },
+    stage2: { min: 12, max: 15, displayText: '12–15' }
+  },
+  4: { 
+    stage1: { min: 10, max: 12, displayText: '10–12' },
+    stage2: { min: 12, max: 20, displayText: '12–20 (цель 15–20)' }
+  },
+}
 
-const DEFAULT_REP_RANGE = { lower: 6, upper: 8, extendedUpper: '10-12' };
+const DEFAULT_REP_RANGE = { 
+  stage1: { min: 6, max: 8, displayText: '6–8' },
+  stage2: { min: 8, max: 12, displayText: '8–12 (цель 10–12)' }
+}
 
 export interface ProgressionResult {
-  nextWeight: number;
-  targetRangeText: string;
-  explanation: string;
+  nextWeight: number
+  targetRangeText: string
+  explanation: string
   updatedState: {
-    current_working_weight: number;
-    current_sets: number;
-    volume_reduce_on: boolean;
-    success_streak: number;
-    fail_streak: number;
-    last_target_range: string;
-    last_recommendation_text: string;
-  };
+    current_working_weight: number
+    current_sets: number
+    volume_reduce_on: boolean
+    success_streak: number
+    fail_streak: number
+    last_target_range: string
+    last_recommendation_text: string
+    rep_stage: number
+  }
 }
 
 interface ExerciseData {
-  id: string;
-  type: number;
-  increment_value: number;
+  id: string
+  type: number
+  increment_value: number
 }
 
 interface ExerciseStateData {
-  id: string;
-  current_working_weight: number;
-  current_sets: number;
-  base_sets: number;
-  volume_reduce_on: boolean;
-  success_streak: number;
-  fail_streak: number;
+  id: string
+  current_working_weight: number
+  current_sets: number
+  base_sets: number
+  volume_reduce_on: boolean
+  success_streak: number
+  fail_streak: number
+  rep_stage: number
 }
 
 interface SetData {
-  weight: number;
-  reps: number;
-  set_index: number;
+  weight: number
+  reps: number
+  set_index: number
 }
 
 export async function calculateRecommendationAndUpdateState(
@@ -57,9 +78,9 @@ export async function calculateRecommendationAndUpdateState(
     .from('exercises')
     .select('id, type, increment_value')
     .eq('id', exerciseId)
-    .single();
+    .single()
 
-  if (!exercise) return null;
+  if (!exercise) return null
 
   // 2. Load exercise state
   const { data: exerciseState } = await supabase
@@ -67,27 +88,27 @@ export async function calculateRecommendationAndUpdateState(
     .select('*')
     .eq('exercise_id', exerciseId)
     .eq('user_id', userId)
-    .single();
+    .single()
 
-  if (!exerciseState) return null;
+  if (!exerciseState) return null
 
   // 3. Load sets for this session exercise
   const { data: sets } = await supabase
     .from('sets')
     .select('weight, reps, set_index')
     .eq('session_exercise_id', sessionExerciseId)
-    .order('set_index');
+    .order('set_index')
 
-  if (!sets || sets.length === 0) return null;
+  if (!sets || sets.length === 0) return null
 
   // 4. Load RPE
   const { data: sessionExercise } = await supabase
     .from('session_exercises')
     .select('rpe')
     .eq('id', sessionExerciseId)
-    .single();
+    .single()
 
-  const rpe = sessionExercise?.rpe ?? null;
+  const rpe = sessionExercise?.rpe ?? null
 
   // 5. Calculate progression
   const result = calculateProgression(
@@ -95,7 +116,7 @@ export async function calculateRecommendationAndUpdateState(
     exerciseState as ExerciseStateData,
     sets as SetData[],
     rpe
-  );
+  )
 
   // 6. Save updated state
   await supabase
@@ -108,11 +129,12 @@ export async function calculateRecommendationAndUpdateState(
       fail_streak: result.updatedState.fail_streak,
       last_target_range: result.updatedState.last_target_range,
       last_recommendation_text: result.updatedState.last_recommendation_text,
+      rep_stage: result.updatedState.rep_stage,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', exerciseState.id);
+    .eq('id', exerciseState.id)
 
-  return result;
+  return result
 }
 
 function calculateProgression(
@@ -121,16 +143,18 @@ function calculateProgression(
   sets: SetData[],
   rpe: number | null
 ): ProgressionResult {
-  const repRange = REP_RANGES[exercise.type] || DEFAULT_REP_RANGE;
-  const targetRangeText = `${repRange.lower}-${repRange.upper}`;
-  const incrementValue = exercise.increment_value;
+  const repRanges = REP_RANGES[exercise.type] || DEFAULT_REP_RANGE
+  const currentStage = state.rep_stage || 1
+  const currentRange = currentStage === 1 ? repRanges.stage1 : repRanges.stage2
+  const incrementValue = exercise.increment_value
 
-  // Working sets = first state.current_sets sets
+  // Working sets = first state.current_sets sets by set_index
   const workingSets = sets
     .sort((a, b) => a.set_index - b.set_index)
-    .slice(0, state.current_sets);
+    .slice(0, state.current_sets)
 
   if (workingSets.length === 0) {
+    const targetRangeText = currentRange.displayText
     return {
       nextWeight: state.current_working_weight,
       targetRangeText,
@@ -143,71 +167,102 @@ function calculateProgression(
         fail_streak: state.fail_streak,
         last_target_range: targetRangeText,
         last_recommendation_text: 'Нет данных о подходах.',
+        rep_stage: currentStage,
       },
-    };
+    }
   }
 
   // Current weight = weight of first working set
-  const currentWeight = workingSets[0].weight;
+  const currentWeight = workingSets[0].weight
 
-  // Check conditions
-  const allAtOrAboveUpper = workingSets.every(s => s.reps >= repRange.upper);
-  const anyBelowLower = workingSets.some(s => s.reps < repRange.lower);
-  const rpeHigh = rpe !== null && rpe >= 8.5;
-  const rpeLowOrModerate = rpe === null || rpe <= 8;
+  // Check conditions based on current stage
+  const allAtOrAboveMax = workingSets.every(s => s.reps >= currentRange.max)
+  const anyBelowMin = workingSets.some(s => s.reps < currentRange.min)
+  const rpeHigh = rpe !== null && rpe >= 8.5
+  const rpeLowOrModerate = rpe === null || rpe <= 8
 
-  // Success = upper achieved in all sets
-  // Failure = any set below lower OR RPE >= 8.5
-  const isSuccess = allAtOrAboveUpper;
-  const isFailure = anyBelowLower || rpeHigh;
+  // Failure = any set below min OR RPE >= 8.5
+  const isFailure = anyBelowMin || rpeHigh
 
   // Initialize updated state
-  let newFailStreak = state.fail_streak;
-  let newSuccessStreak = state.success_streak;
-  let newVolumeReduceOn = state.volume_reduce_on;
-  let newCurrentSets = state.current_sets;
-  let nextWeight = currentWeight;
-  let explanation = '';
+  let newFailStreak = state.fail_streak
+  let newSuccessStreak = state.success_streak
+  let newVolumeReduceOn = state.volume_reduce_on
+  let newCurrentSets = state.current_sets
+  let newRepStage = currentStage
+  let nextWeight = currentWeight
+  let explanation = ''
 
-  // Update streaks
+  // Update streaks based on success/failure
   if (isFailure) {
-    newFailStreak += 1;
-    newSuccessStreak = 0;
-  } else if (isSuccess && rpeLowOrModerate) {
-    newSuccessStreak += 1;
-    newFailStreak = 0;
+    newFailStreak += 1
+    newSuccessStreak = 0
+  } else if (allAtOrAboveMax && rpeLowOrModerate) {
+    newSuccessStreak += 1
+    newFailStreak = 0
   }
 
-  // Weight increase logic
-  if (isSuccess && rpeLowOrModerate) {
-    nextWeight = currentWeight + incrementValue;
-    explanation = 'Верх диапазона выполнен во всех подходах и RPE ≤ 8 — увеличиваем вес.';
-  } else if (isSuccess && rpeHigh) {
-    nextWeight = currentWeight;
-    explanation = 'Верх выполнен, но RPE высокий — закрепляем вес.';
+  // Two-stage progression logic
+  if (currentStage === 1) {
+    // Stage 1: Base range
+    if (allAtOrAboveMax && rpeLowOrModerate) {
+      // Move to stage 2, don't increase weight
+      newRepStage = 2
+      nextWeight = currentWeight
+      explanation = 'Верх базового диапазона выполнен — переходим на добор повторов без повышения веса.'
+    } else if (allAtOrAboveMax && rpeHigh) {
+      // Stay in stage 1, RPE too high
+      newRepStage = 1
+      nextWeight = currentWeight
+      explanation = 'Верх выполнен, но RPE высокий — закрепляем в базовом диапазоне.'
+    } else {
+      // Reps not reached
+      newRepStage = 1
+      nextWeight = currentWeight
+      explanation = 'Добираем повторы в базовом диапазоне, вес сохраняем.'
+    }
   } else {
-    nextWeight = currentWeight;
-    explanation = 'Добираем повторы в диапазоне, вес сохраняем.';
+    // Stage 2: Extended range
+    if (allAtOrAboveMax && rpeLowOrModerate) {
+      // Increase weight and reset to stage 1
+      nextWeight = currentWeight + incrementValue
+      newRepStage = 1
+      explanation = 'Верх расширенного диапазона выполнен и RPE ≤ 8 — увеличиваем вес и возвращаемся в базовый диапазон.'
+    } else if (allAtOrAboveMax && rpeHigh) {
+      // Stay in stage 2, RPE too high
+      nextWeight = currentWeight
+      newRepStage = 2
+      explanation = 'Верх расширенного диапазона выполнен, но RPE высокий — закрепляем.'
+    } else {
+      // Reps not reached
+      nextWeight = currentWeight
+      newRepStage = 2
+      explanation = 'Добираем повторы в расширенном диапазоне, вес сохраняем.'
+    }
   }
 
-  // Volume reduction logic
+  // Volume reduction logic (same as before)
   // Enable volume reduction if 2 failures in a row
   if (newFailStreak >= 2 && !newVolumeReduceOn) {
-    newVolumeReduceOn = true;
-    newCurrentSets = Math.max(state.base_sets - 1, 1);
-    newFailStreak = 0;
-    newSuccessStreak = 0;
-    explanation += ' 2 сбоя подряд — уменьшаем объём на 1 подход.';
+    newVolumeReduceOn = true
+    newCurrentSets = Math.max(state.base_sets - 1, 1)
+    newFailStreak = 0
+    newSuccessStreak = 0
+    explanation += ' 2 сбоя подряд — уменьшаем объём на 1 подход.'
   }
 
   // Exit volume reduction if 2 successes in a row
   if (newVolumeReduceOn && newSuccessStreak >= 2) {
-    newVolumeReduceOn = false;
-    newCurrentSets = state.base_sets;
-    newSuccessStreak = 0;
-    newFailStreak = 0;
-    explanation += ' 2 успешные тренировки подряд — возвращаем исходный объём.';
+    newVolumeReduceOn = false
+    newCurrentSets = state.base_sets
+    newSuccessStreak = 0
+    newFailStreak = 0
+    explanation += ' 2 успешные тренировки подряд — возвращаем исходный объём.'
   }
+
+  // Get target range text for the NEW stage (what user should aim for next time)
+  const newRange = newRepStage === 1 ? repRanges.stage1 : repRanges.stage2
+  const targetRangeText = newRange.displayText
 
   return {
     nextWeight,
@@ -221,8 +276,9 @@ function calculateProgression(
       fail_streak: newFailStreak,
       last_target_range: targetRangeText,
       last_recommendation_text: explanation.trim(),
+      rep_stage: newRepStage,
     },
-  };
+  }
 }
 
 // Calculate for all exercises in a session
@@ -234,12 +290,12 @@ export async function calculateProgressionForSession(
   const { data: sessionExercises } = await supabase
     .from('session_exercises')
     .select('id, exercise_id')
-    .eq('session_id', sessionId);
+    .eq('session_id', sessionId)
 
-  if (!sessionExercises) return;
+  if (!sessionExercises) return
 
   // Calculate for each exercise
   for (const se of sessionExercises) {
-    await calculateRecommendationAndUpdateState(se.exercise_id, se.id, userId);
+    await calculateRecommendationAndUpdateState(se.exercise_id, se.id, userId)
   }
 }

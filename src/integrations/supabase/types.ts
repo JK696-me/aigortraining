@@ -24,6 +24,7 @@ export type Database = {
           id: string
           last_recommendation_text: string | null
           last_target_range: string | null
+          rep_stage: number
           success_streak: number
           updated_at: string
           user_id: string
@@ -38,6 +39,7 @@ export type Database = {
           id?: string
           last_recommendation_text?: string | null
           last_target_range?: string | null
+          rep_stage?: number
           success_streak?: number
           updated_at?: string
           user_id: string
@@ -52,6 +54,7 @@ export type Database = {
           id?: string
           last_recommendation_text?: string | null
           last_target_range?: string | null
+          rep_stage?: number
           success_streak?: number
           updated_at?: string
           user_id?: string
