@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Trophy, TrendingDown, Calendar } from "lucide-react";
+import { ChevronLeft, Trophy, TrendingDown, Calendar, TrendingUp, Weight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Layout } from "@/components/Layout";
@@ -9,6 +9,17 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+} from 'recharts';
 
 interface ExerciseState {
   current_working_weight: number;
@@ -30,6 +41,14 @@ interface BestSession {
   completed_at: string;
   weight: number;
   reps: number;
+}
+
+interface ChartDataPoint {
+  date: string;
+  shortDate: string;
+  maxWeight: number;
+  totalVolume: number;
+  totalReps: number;
 }
 
 export default function SingleExerciseHistory() {
@@ -75,7 +94,7 @@ export default function SingleExerciseHistory() {
         setExerciseState(stateData);
       }
 
-      // Load last 5 completed sessions with this exercise
+      // Load last 20 completed sessions with this exercise (for charts)
       const { data: sessionExercises } = await supabase
         .from('session_exercises')
         .select(`
@@ -88,7 +107,7 @@ export default function SingleExerciseHistory() {
         .eq('sessions.status', 'completed')
         .eq('sessions.user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(20);
 
       if (sessionExercises && sessionExercises.length > 0) {
         const history: SessionHistoryItem[] = [];
@@ -142,6 +161,27 @@ export default function SingleExerciseHistory() {
 
     loadData();
   }, [user, exerciseId]);
+
+  // Prepare chart data
+  const chartData = useMemo<ChartDataPoint[]>(() => {
+    if (sessionHistory.length === 0) return [];
+
+    // Reverse to show oldest first (left to right on chart)
+    return [...sessionHistory].reverse().map((item) => {
+      const maxWeight = Math.max(...item.sets.map(s => s.weight), 0);
+      const totalVolume = item.sets.reduce((sum, s) => sum + s.weight * s.reps, 0);
+      const totalReps = item.sets.reduce((sum, s) => sum + s.reps, 0);
+      const date = new Date(item.completed_at);
+      
+      return {
+        date: format(date, 'd MMM', { locale: locale === 'ru' ? ru : enUS }),
+        shortDate: format(date, 'd.MM'),
+        maxWeight,
+        totalVolume,
+        totalReps,
+      };
+    });
+  }, [sessionHistory, locale]);
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -233,6 +273,110 @@ export default function SingleExerciseHistory() {
               </Card>
             )}
 
+            {/* Progress Charts */}
+            {chartData.length >= 2 && (
+              <div className="space-y-6 mb-6">
+                {/* Weight Progress Chart */}
+                <Card className="p-4 bg-card border-border">
+                  <div className="flex items-center gap-2 mb-4">
+                    <TrendingUp className="h-4 w-4 text-primary" />
+                    <h3 className="font-semibold text-foreground text-sm">Прогресс веса</h3>
+                  </div>
+                  <div className="h-[180px] -ml-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartData}>
+                        <CartesianGrid 
+                          strokeDasharray="3 3" 
+                          stroke="hsl(var(--border))" 
+                          vertical={false}
+                        />
+                        <XAxis 
+                          dataKey="date" 
+                          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <YAxis 
+                          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                          tickLine={false}
+                          axisLine={false}
+                          width={35}
+                          domain={['dataMin - 5', 'dataMax + 5']}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                            fontSize: '12px',
+                          }}
+                          labelStyle={{ color: 'hsl(var(--foreground))' }}
+                          formatter={(value: number) => [`${value} кг`, 'Макс. вес']}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="maxWeight"
+                          stroke="hsl(var(--primary))"
+                          strokeWidth={2}
+                          dot={{ fill: 'hsl(var(--primary))', strokeWidth: 0, r: 4 }}
+                          activeDot={{ r: 6, fill: 'hsl(var(--primary))' }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Card>
+
+                {/* Volume Progress Chart */}
+                <Card className="p-4 bg-card border-border">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Weight className="h-4 w-4 text-accent" />
+                    <h3 className="font-semibold text-foreground text-sm">Объём тренировки</h3>
+                  </div>
+                  <div className="h-[180px] -ml-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chartData}>
+                        <CartesianGrid 
+                          strokeDasharray="3 3" 
+                          stroke="hsl(var(--border))" 
+                          vertical={false}
+                        />
+                        <XAxis 
+                          dataKey="date" 
+                          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <YAxis 
+                          tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                          tickLine={false}
+                          axisLine={false}
+                          width={45}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: 'hsl(var(--card))',
+                            border: '1px solid hsl(var(--border))',
+                            borderRadius: '8px',
+                            fontSize: '12px',
+                          }}
+                          labelStyle={{ color: 'hsl(var(--foreground))' }}
+                          formatter={(value: number) => [`${value} кг`, 'Объём']}
+                        />
+                        <Bar
+                          dataKey="totalVolume"
+                          fill="hsl(var(--accent))"
+                          radius={[4, 4, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
+                    Объём = вес × повторы (сумма всех подходов)
+                  </p>
+                </Card>
+              </div>
+            )}
+
             {/* Best Session */}
             {bestSession && (
               <Card className="p-4 bg-primary/10 border-primary/20 mb-6">
@@ -262,7 +406,7 @@ export default function SingleExerciseHistory() {
                 </Card>
               ) : (
                 <div className="space-y-3">
-                  {sessionHistory.map((item) => (
+                  {sessionHistory.slice(0, 5).map((item) => (
                     <Card key={item.session_exercise_id} className="p-4 bg-card border-border">
                       <div className="flex items-center justify-between mb-3">
                         <p className="font-medium text-foreground">{formatDate(item.completed_at)}</p>
