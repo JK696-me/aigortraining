@@ -22,6 +22,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { deleteDraft } from "@/lib/draftStorage";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -63,13 +64,16 @@ export default function Settings() {
   };
 
   const handleResetTrainingData = async () => {
-    if (resetConfirmText !== 'СБРОС') return;
+    if (resetConfirmText !== 'СБРОС' || !user) return;
     
     setIsResetting(true);
     try {
       const { error } = await supabase.rpc('reset_training_data');
       
       if (error) throw error;
+
+      // Clear local draft
+      await deleteDraft(user.id);
 
       // Invalidate all relevant queries to refresh data
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
