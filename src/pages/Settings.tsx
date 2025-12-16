@@ -1,17 +1,31 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight } from "lucide-react";
+import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight, Trash2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserSettings } from "@/hooks/useUserSettings";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 export default function Settings() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { locale, setLocale, t } = useLanguage();
   const { user, signOut } = useAuth();
   const { settings, updateSettings, isUpdating } = useUserSettings();
@@ -19,6 +33,11 @@ export default function Settings() {
   const [barbellIncrement, setBarbellIncrement] = useState('5');
   const [dumbbellsIncrement, setDumbbellsIncrement] = useState('2');
   const [machineIncrement, setMachineIncrement] = useState('1');
+  
+  // Reset dialog state
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   // Initialize from settings
   useEffect(() => {
@@ -41,6 +60,34 @@ export default function Settings() {
     updateSettings({ [field]: numValue }, {
       onSuccess: () => toast.success(t('settingsSaved'))
     });
+  };
+
+  const handleResetTrainingData = async () => {
+    if (resetConfirmText !== 'СБРОС') return;
+    
+    setIsResetting(true);
+    try {
+      const { error } = await supabase.rpc('reset_training_data');
+      
+      if (error) throw error;
+
+      // Invalidate all relevant queries to refresh data
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      queryClient.invalidateQueries({ queryKey: ['session-exercises'] });
+      queryClient.invalidateQueries({ queryKey: ['sets'] });
+      queryClient.invalidateQueries({ queryKey: ['exercise-state'] });
+      queryClient.invalidateQueries({ queryKey: ['last-exercise-sets'] });
+
+      toast.success('Данные тренировок удалены');
+      setResetDialogOpen(false);
+      setResetConfirmText('');
+    } catch (error) {
+      console.error('Failed to reset training data:', error);
+      toast.error('Ошибка сброса данных');
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   return (
@@ -226,6 +273,25 @@ export default function Settings() {
           </Card>
         </div>
 
+        {/* Danger Zone */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-destructive mb-3 px-1">
+            Опасная зона
+          </h3>
+          <Card className="bg-card border-destructive/30 overflow-hidden">
+            <button 
+              onClick={() => setResetDialogOpen(true)}
+              className="flex items-center gap-3 p-4 w-full text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="h-5 w-5" />
+              <div className="text-left">
+                <span className="font-medium block">Сбросить данные тренировок</span>
+                <span className="text-xs opacity-70">Удалить все тренировки, сохранить упражнения</span>
+              </div>
+            </button>
+          </Card>
+        </div>
+
         {/* Logout */}
         <Card className="bg-card border-border overflow-hidden">
           <button 
@@ -242,6 +308,48 @@ export default function Settings() {
           AIgor Training v1.0.0
         </p>
       </div>
+
+      {/* Reset Training Data Dialog */}
+      <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive">Полный сброс тренировок</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p>
+                Удалим все тренировки, упражнения в тренировках и подходы. 
+                Упражнения из справочника сохранятся. Действие необратимо.
+              </p>
+              <div>
+                <p className="text-sm mb-2">
+                  Для подтверждения введите <span className="font-mono font-bold">СБРОС</span>:
+                </p>
+                <Input
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  placeholder="Введите СБРОС"
+                  className="font-mono"
+                  autoComplete="off"
+                />
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel 
+              disabled={isResetting}
+              onClick={() => setResetConfirmText('')}
+            >
+              Отмена
+            </AlertDialogCancel>
+            <Button
+              onClick={handleResetTrainingData}
+              disabled={resetConfirmText !== 'СБРОС' || isResetting}
+              variant="destructive"
+            >
+              {isResetting ? 'Удаление...' : 'Сбросить'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }
