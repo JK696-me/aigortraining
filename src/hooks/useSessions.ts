@@ -197,7 +197,7 @@ export function useSessionExercises(sessionId: string | null) {
 export function useSets(sessionExerciseId: string | null) {
   const queryClient = useQueryClient();
 
-  const { data: sets = [], isLoading } = useQuery({
+  const { data: sets = [], isLoading, refetch } = useQuery({
     queryKey: ['sets', sessionExerciseId],
     queryFn: async () => {
       if (!sessionExerciseId) return [];
@@ -260,6 +260,7 @@ export function useSets(sessionExerciseId: string | null) {
     addSet: addSet.mutate,
     isUpdating: updateSet.isPending,
     isAdding: addSet.isPending,
+    refetch,
   };
 }
 
