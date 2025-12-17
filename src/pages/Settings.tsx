@@ -18,17 +18,18 @@ import {
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkout } from "@/contexts/WorkoutContext";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { deleteDraft } from "@/lib/draftStorage";
 
 export default function Settings() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { locale, setLocale, t } = useLanguage();
   const { user, signOut } = useAuth();
+  const { clearDraft } = useWorkout();
   const { settings, updateSettings, isUpdating } = useUserSettings();
 
   const [barbellIncrement, setBarbellIncrement] = useState('5');
@@ -73,7 +74,7 @@ export default function Settings() {
       if (error) throw error;
 
       // Clear local draft
-      await deleteDraft(user.id);
+      await clearDraft();
 
       // Invalidate all relevant queries to refresh data
       queryClient.invalidateQueries({ queryKey: ['sessions'] });

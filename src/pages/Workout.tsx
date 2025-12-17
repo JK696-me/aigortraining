@@ -13,8 +13,7 @@ import { SyncIndicator } from "@/components/SyncIndicator";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
-import { useDraftWorkout } from "@/hooks/useDraftWorkout";
-import { deleteDraft } from "@/lib/draftStorage";
+import { useWorkout } from "@/contexts/WorkoutContext";
 
 export default function Workout() {
   const navigate = useNavigate();
@@ -29,9 +28,7 @@ export default function Workout() {
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
 
-  const { syncState, isOnline, isSyncing, syncDraftToSupabase } = useDraftWorkout({
-    userId: user?.id,
-  });
+  const { syncState, isOnline, isSyncing, syncDraftToSupabase, clearDraft } = useWorkout();
 
   // Timer
   useEffect(() => {
@@ -128,7 +125,7 @@ export default function Workout() {
       if (error) throw error;
 
       // Clear local draft
-      await deleteDraft(user.id);
+      await clearDraft();
 
       toast.success(t('workoutFinished'));
       navigate('/');

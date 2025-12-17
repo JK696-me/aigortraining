@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, RotateCcw, Plus, ChevronRight, Zap, Loader2, FileText } from "lucide-react";
+import { Play, RotateCcw, Plus, ChevronRight, Zap, Loader2, FileText, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
@@ -10,59 +10,31 @@ import { useTemplates } from "@/hooks/useTemplates";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { DraftRecoveryModal } from "@/components/DraftRecoveryModal";
-import { useDraftWorkout } from "@/hooks/useDraftWorkout";
-import { DraftWorkout, deleteDraft } from "@/lib/draftStorage";
+import { useWorkout } from "@/contexts/WorkoutContext";
 
 export default function Home() {
   const navigate = useNavigate();
-  const { t, formatDate } = useLanguage();
+  const { t, locale } = useLanguage();
   const { user } = useAuth();
   const { createSession, isCreating } = useSessions();
   const { templates, isLoading: isLoadingTemplates } = useTemplates();
   const [isRepeating, setIsRepeating] = useState(false);
-  const [recoveryDraft, setRecoveryDraft] = useState<DraftWorkout | null>(null);
-  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  
+  const { draft, hasActiveDraft, isLoading: isDraftLoading, clearDraft } = useWorkout();
 
-  const handleRecoveryNeeded = useCallback((draft: DraftWorkout) => {
-    setRecoveryDraft(draft);
-    setShowRecoveryModal(true);
-  }, []);
-
-  const { startNewWorkout, clearDraft, syncDraftToSupabase, continueDraft } = useDraftWorkout({
-    userId: user?.id,
-    onRecoveryNeeded: handleRecoveryNeeded,
-  });
-
-  const handleContinueDraft = async () => {
-    if (!recoveryDraft) return;
-    
-    setShowRecoveryModal(false);
-    
-    if (recoveryDraft.session_id) {
-      navigate(`/workout?session=${recoveryDraft.session_id}`);
-    } else {
-      continueDraft(recoveryDraft);
-      const synced = await syncDraftToSupabase();
-      if (synced && recoveryDraft.session_id) {
-        navigate(`/workout?session=${recoveryDraft.session_id}`);
-      }
+  const handleContinueWorkout = () => {
+    if (draft?.session_id) {
+      navigate(`/workout?session=${draft.session_id}`);
     }
-  };
-
-  const handleDiscardDraft = async () => {
-    if (!recoveryDraft || !user) return;
-    
-    if (recoveryDraft.session_id) {
-      await supabase.from('sessions').delete().eq('id', recoveryDraft.session_id);
-    }
-    
-    await deleteDraft(user.id);
-    setShowRecoveryModal(false);
-    setRecoveryDraft(null);
   };
 
   const handleStartWorkout = async () => {
+    // If there's an active draft, ask to continue or discard
+    if (hasActiveDraft && draft?.session_id) {
+      navigate(`/workout?session=${draft.session_id}`);
+      return;
+    }
+
     try {
       const session = await createSession('empty');
       navigate(`/workout?session=${session.id}`);
@@ -75,6 +47,20 @@ export default function Home() {
     if (!user) {
       toast.error(t('noLastWorkout'));
       return;
+    }
+
+    // If there's an active draft, warn user
+    if (hasActiveDraft) {
+      const confirmed = window.confirm(
+        locale === 'ru' 
+          ? 'У вас есть незавершённая тренировка. Создать новую?' 
+          : 'You have an unfinished workout. Create a new one?'
+      );
+      if (!confirmed) return;
+      await clearDraft();
+      if (draft?.session_id) {
+        await supabase.from('sessions').delete().eq('id', draft.session_id);
+      }
     }
 
     setIsRepeating(true);
@@ -163,6 +149,28 @@ export default function Home() {
           <p className="text-muted-foreground">{t('readyToTrain')}</p>
         </div>
 
+        {/* Continue Active Workout Button */}
+        {hasActiveDraft && draft?.session_id && (
+          <Card className="p-4 mb-6 bg-primary/10 border-primary/30">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-foreground">
+                  {locale === 'ru' ? 'Активная тренировка' : 'Active Workout'}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {locale === 'ru' 
+                    ? `${draft.exercises.length} упражнений` 
+                    : `${draft.exercises.length} exercises`}
+                </p>
+              </div>
+              <Button onClick={handleContinueWorkout} className="bg-primary hover:bg-primary/90">
+                {locale === 'ru' ? 'Продолжить' : 'Continue'}
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Main Actions */}
         <div className="space-y-3 mb-8">
           <Button
@@ -176,7 +184,9 @@ export default function Home() {
             ) : (
               <Play className="h-6 w-6 mr-3" />
             )}
-            {t('startWorkout')}
+            {hasActiveDraft 
+              ? (locale === 'ru' ? 'Продолжить тренировку' : 'Continue Workout')
+              : t('startWorkout')}
           </Button>
 
           <Button
@@ -218,14 +228,14 @@ export default function Home() {
             <Card className="p-6 bg-card border-border text-center">
               <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground mb-3">
-                Нет шаблонов
+                {locale === 'ru' ? 'Нет шаблонов' : 'No templates'}
               </p>
               <Button 
                 variant="secondary" 
                 size="sm"
                 onClick={() => navigate('/templates')}
               >
-                Создать шаблон
+                {locale === 'ru' ? 'Создать шаблон' : 'Create template'}
               </Button>
             </Card>
           ) : (
@@ -258,7 +268,7 @@ export default function Home() {
                   className="w-full text-muted-foreground"
                   onClick={() => navigate('/templates')}
                 >
-                  Все шаблоны ({templates.length})
+                  {locale === 'ru' ? 'Все шаблоны' : 'All templates'} ({templates.length})
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               )}
@@ -266,14 +276,6 @@ export default function Home() {
           )}
         </section>
       </div>
-
-      {/* Draft Recovery Modal */}
-      <DraftRecoveryModal
-        draft={recoveryDraft}
-        isOpen={showRecoveryModal}
-        onContinue={handleContinueDraft}
-        onDiscard={handleDiscardDraft}
-      />
     </Layout>
   );
 }
