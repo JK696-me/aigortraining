@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Trophy, TrendingDown, Calendar, TrendingUp, Weight } from "lucide-react";
+import { ChevronLeft, Trophy, TrendingDown, Calendar, TrendingUp, Weight, Info, ChevronDown, ChevronUp } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -24,7 +25,11 @@ import {
 interface ExerciseState {
   current_working_weight: number;
   current_sets: number;
+  base_sets: number;
   volume_reduce_on: boolean;
+  success_streak: number;
+  fail_streak: number;
+  rep_stage: number;
   last_target_range: string | null;
   last_recommendation_text: string | null;
 }
@@ -49,6 +54,98 @@ interface ChartDataPoint {
   maxWeight: number;
   totalVolume: number;
   totalReps: number;
+}
+
+// Recommendation Details Component for stored exercise state
+function RecommendationDetails({ 
+  exerciseState, 
+  locale, 
+  t 
+}: { 
+  exerciseState: ExerciseState; 
+  locale: string; 
+  t: (key: string) => string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <p className="text-xs text-muted-foreground mb-1">{t('nextTimeRecommendation')}</p>
+      {exerciseState.last_target_range && (
+        <p className="text-sm text-foreground mb-1">
+          <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
+          <span className="font-mono">{exerciseState.last_target_range}</span>
+        </p>
+      )}
+      <p className="text-sm text-muted-foreground">
+        {exerciseState.last_recommendation_text}
+      </p>
+      
+      {/* Why This Button */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setIsOpen(!isOpen)}
+        className="text-muted-foreground hover:text-foreground p-0 h-auto font-normal mt-2"
+      >
+        <Info className="h-3.5 w-3.5 mr-1" />
+        {locale === 'ru' ? 'Почему так?' : 'Why this?'}
+        {isOpen ? (
+          <ChevronUp className="h-3.5 w-3.5 ml-1" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 ml-1" />
+        )}
+      </Button>
+
+      {isOpen && (
+        <div className="mt-3 p-3 rounded-lg bg-secondary/50 text-sm space-y-2">
+          {/* Current Stage */}
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {locale === 'ru' ? 'Текущая ступень:' : 'Current stage:'}
+            </span>
+            <span className="font-medium text-foreground">
+              {locale === 'ru' ? `ступень ${exerciseState.rep_stage}` : `stage ${exerciseState.rep_stage}`}
+            </span>
+          </div>
+
+          {/* Streaks */}
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {locale === 'ru' ? 'Серии (успех/сбой):' : 'Streaks (success/fail):'}
+            </span>
+            <span className="font-medium text-foreground">
+              {exerciseState.success_streak} / {exerciseState.fail_streak}
+            </span>
+          </div>
+
+          {/* Volume Reduce */}
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {locale === 'ru' ? 'Снижение объёма:' : 'Volume reduce:'}
+            </span>
+            <span className={`font-medium ${exerciseState.volume_reduce_on ? 'text-amber-500' : 'text-foreground'}`}>
+              {exerciseState.volume_reduce_on 
+                ? (locale === 'ru' 
+                    ? `активно (${exerciseState.current_sets} из ${exerciseState.base_sets})` 
+                    : `active (${exerciseState.current_sets} of ${exerciseState.base_sets})`)
+                : (locale === 'ru' ? 'нет' : 'no')}
+            </span>
+          </div>
+
+          {/* Working Sets */}
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {locale === 'ru' ? 'Рабочих подходов:' : 'Working sets:'}
+            </span>
+            <span className="font-medium text-foreground">
+              {exerciseState.current_sets}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function SingleExerciseHistory() {
@@ -85,13 +182,13 @@ export default function SingleExerciseHistory() {
       // Load exercise state
       const { data: stateData } = await supabase
         .from('exercise_state')
-        .select('current_working_weight, current_sets, volume_reduce_on, last_target_range, last_recommendation_text')
+        .select('current_working_weight, current_sets, base_sets, volume_reduce_on, success_streak, fail_streak, rep_stage, last_target_range, last_recommendation_text')
         .eq('exercise_id', exerciseId)
         .eq('user_id', user.id)
         .maybeSingle();
       
       if (stateData) {
-        setExerciseState(stateData);
+        setExerciseState(stateData as ExerciseState);
       }
 
       // Load last 20 completed sessions with this exercise (for charts)
@@ -257,18 +354,11 @@ export default function SingleExerciseHistory() {
                 
                 {/* Recommendation */}
                 {exerciseState.last_recommendation_text && (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-xs text-muted-foreground mb-1">{t('nextTimeRecommendation')}</p>
-                    {exerciseState.last_target_range && (
-                      <p className="text-sm text-foreground mb-1">
-                        <span className="text-muted-foreground">{t('targetRange')}:</span>{' '}
-                        <span className="font-mono">{exerciseState.last_target_range}</span>
-                      </p>
-                    )}
-                    <p className="text-sm text-muted-foreground">
-                      {exerciseState.last_recommendation_text}
-                    </p>
-                  </div>
+                  <RecommendationDetails 
+                    exerciseState={exerciseState}
+                    locale={locale}
+                    t={t}
+                  />
                 )}
               </Card>
             )}
