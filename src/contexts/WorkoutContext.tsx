@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -16,25 +16,47 @@ import {
   deleteSetFromDraft,
   SyncState,
 } from '@/lib/draftStorage';
+import { useAuth } from './AuthContext';
 
-interface UseDraftWorkoutOptions {
-  userId: string | undefined;
-  onRecoveryNeeded?: (draft: DraftWorkout) => void;
+interface WorkoutContextType {
+  draft: DraftWorkout | null;
+  isLoading: boolean;
+  isSyncing: boolean;
+  isOnline: boolean;
+  syncState: SyncState | null;
+  hasActiveDraft: boolean;
+  startNewWorkout: (source?: string, templateId?: string | null) => Promise<DraftWorkout | null>;
+  addExercise: (exerciseId: string, initialSets: { weight: number; reps: number }[]) => void;
+  updateExerciseRpe: (tempId: string, rpe: number | null) => void;
+  updateSet: (tempExerciseId: string, setIndex: number, updates: { weight?: number; reps?: number }) => void;
+  addSet: (tempExerciseId: string, weight: number, reps: number) => void;
+  deleteSet: (tempExerciseId: string, setIndex: number) => void;
+  finishWorkout: () => Promise<boolean>;
+  clearDraft: () => Promise<void>;
+  continueDraft: (existingDraft: DraftWorkout) => void;
+  syncDraftToSupabase: () => Promise<boolean>;
+  getExercise: (tempId: string) => DraftExercise | undefined;
+  loadDraftFromServer: () => Promise<void>;
 }
 
-export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOptions) {
+const WorkoutContext = createContext<WorkoutContextType | undefined>(undefined);
+
+export function WorkoutProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const userId = user?.id;
+  
   const [draft, setDraft] = useState<DraftWorkout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const queryClient = useQueryClient();
+  const loadedRef = useRef(false);
 
   // Monitor online status
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      // Trigger sync when back online
       if (draft?.sync_state === 'dirty' || draft?.sync_state === 'error') {
         syncDraftToSupabase();
       }
@@ -50,24 +72,96 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
     };
   }, [draft]);
 
-  // Load draft on mount
+  // Load draft on mount - check local first, then server
   useEffect(() => {
-    if (!userId) {
+    if (!userId || loadedRef.current) {
       setIsLoading(false);
       return;
     }
 
     const loadDraft = async () => {
-      const existingDraft = await getDraft(userId);
-      if (existingDraft && existingDraft.exercises.length > 0) {
-        setDraft(existingDraft);
-        onRecoveryNeeded?.(existingDraft);
+      loadedRef.current = true;
+      
+      // 1. Check local draft first (source of truth)
+      const localDraft = await getDraft(userId);
+      if (localDraft && localDraft.exercises.length > 0) {
+        setDraft(localDraft);
+        setIsLoading(false);
+        return;
       }
+
+      // 2. Check for server-side draft session
+      const { data: serverDraft } = await supabase
+        .from('sessions')
+        .select('id, date, source, template_id')
+        .eq('user_id', userId)
+        .eq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (serverDraft) {
+        // Restore from server to local
+        const { data: serverExercises } = await supabase
+          .from('session_exercises')
+          .select(`
+            id,
+            exercise_id,
+            rpe
+          `)
+          .eq('session_id', serverDraft.id);
+
+        const exercises: DraftExercise[] = [];
+        
+        for (const se of serverExercises || []) {
+          const { data: sets } = await supabase
+            .from('sets')
+            .select('set_index, weight, reps')
+            .eq('session_exercise_id', se.id)
+            .order('set_index');
+
+          exercises.push({
+            temp_session_exercise_id: se.id,
+            exercise_id: se.exercise_id,
+            rpe: se.rpe,
+            sets: sets?.map(s => ({
+              set_index: s.set_index,
+              weight: s.weight,
+              reps: s.reps,
+            })) || [],
+          });
+        }
+
+        const restoredDraft: DraftWorkout = {
+          user_id: userId,
+          session_id: serverDraft.id,
+          started_at: serverDraft.date,
+          session: {
+            source: serverDraft.source,
+            template_id: serverDraft.template_id,
+          },
+          exercises,
+          last_saved_at: new Date().toISOString(),
+          sync_state: 'synced',
+        };
+
+        setDraft(restoredDraft);
+        await saveDraft(restoredDraft);
+      }
+
       setIsLoading(false);
     };
 
     loadDraft();
-  }, [userId, onRecoveryNeeded]);
+  }, [userId]);
+
+  // Reset when user changes
+  useEffect(() => {
+    if (!userId) {
+      setDraft(null);
+      loadedRef.current = false;
+    }
+  }, [userId]);
 
   // Debounced save
   const scheduleSave = useCallback((updatedDraft: DraftWorkout) => {
@@ -88,58 +182,6 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
       return updated;
     });
   }, [scheduleSave]);
-
-  // Create new workout
-  const startNewWorkout = useCallback(async (source: string = 'empty', templateId?: string | null): Promise<DraftWorkout | null> => {
-    if (!userId) return null;
-
-    const newDraft = createNewDraft(userId, source, templateId);
-    setDraft(newDraft);
-    await saveDraft(newDraft);
-    
-    // Sync immediately if online
-    if (isOnline) {
-      return await syncNewSession(newDraft);
-    }
-    
-    return newDraft;
-  }, [userId, isOnline]);
-
-  // Sync new session to Supabase
-  const syncNewSession = async (draftToSync: DraftWorkout): Promise<DraftWorkout | null> => {
-    if (!draftToSync.user_id) return draftToSync;
-
-    try {
-      const { data: session, error } = await supabase
-        .from('sessions')
-        .insert({
-          user_id: draftToSync.user_id,
-          date: draftToSync.started_at,
-          source: draftToSync.session.source,
-          template_id: draftToSync.session.template_id,
-          status: 'draft',
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const updated = {
-        ...draftToSync,
-        session_id: session.id,
-        sync_state: 'synced' as SyncState,
-      };
-      setDraft(updated);
-      await saveDraft(updated);
-      return updated;
-    } catch (error) {
-      console.error('Failed to sync new session:', error);
-      const updated = { ...draftToSync, sync_state: 'error' as SyncState };
-      setDraft(updated);
-      await saveDraft(updated);
-      return updated;
-    }
-  };
 
   // Sync entire draft to Supabase
   const syncDraftToSupabase = useCallback(async (): Promise<boolean> => {
@@ -169,7 +211,6 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
 
       // B) Sync exercises and sets
       for (const exercise of currentDraft.exercises) {
-        // Check if session_exercise exists
         const { data: existingExercises } = await supabase
           .from('session_exercises')
           .select('id')
@@ -179,7 +220,6 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
         let sessionExerciseId: string;
 
         if (!existingExercises || existingExercises.length === 0) {
-          // Create session_exercise
           const { data: newSe, error: seError } = await supabase
             .from('session_exercises')
             .insert({
@@ -194,14 +234,12 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
           sessionExerciseId = newSe.id;
         } else {
           sessionExerciseId = existingExercises[0].id;
-          // Update RPE if changed
           await supabase
             .from('session_exercises')
             .update({ rpe: exercise.rpe })
             .eq('id', sessionExerciseId);
         }
 
-        // Sync sets
         const { data: existingSets } = await supabase
           .from('sets')
           .select('id, set_index')
@@ -211,14 +249,12 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
 
         for (const set of exercise.sets) {
           if (existingSetIndexes.has(set.set_index)) {
-            // Update existing set
             await supabase
               .from('sets')
               .update({ weight: set.weight, reps: set.reps })
               .eq('session_exercise_id', sessionExerciseId)
               .eq('set_index', set.set_index);
           } else {
-            // Create new set
             await supabase
               .from('sets')
               .insert({
@@ -230,7 +266,6 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
           }
         }
 
-        // Delete extra sets that don't exist in draft
         const draftSetIndexes = new Set(exercise.sets.map(s => s.set_index));
         for (const existingSet of existingSets || []) {
           if (!draftSetIndexes.has(existingSet.set_index)) {
@@ -264,7 +299,6 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
       setDraft(currentDraft);
       await saveDraft(currentDraft);
 
-      // Invalidate queries
       queryClient.invalidateQueries({ queryKey: ['session', currentDraft.session_id] });
       queryClient.invalidateQueries({ queryKey: ['session-exercises', currentDraft.session_id] });
 
@@ -280,6 +314,50 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
       setIsSyncing(false);
     }
   }, [draft, userId, isOnline, queryClient]);
+
+  // Create new workout
+  const startNewWorkout = useCallback(async (source: string = 'empty', templateId?: string | null): Promise<DraftWorkout | null> => {
+    if (!userId) return null;
+
+    const newDraft = createNewDraft(userId, source, templateId);
+    setDraft(newDraft);
+    await saveDraft(newDraft);
+
+    if (isOnline) {
+      try {
+        const { data: session, error } = await supabase
+          .from('sessions')
+          .insert({
+            user_id: userId,
+            date: newDraft.started_at,
+            source: newDraft.session.source,
+            template_id: newDraft.session.template_id,
+            status: 'draft',
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        const updated = {
+          ...newDraft,
+          session_id: session.id,
+          sync_state: 'synced' as SyncState,
+        };
+        setDraft(updated);
+        await saveDraft(updated);
+        return updated;
+      } catch (error) {
+        console.error('Failed to sync new session:', error);
+        const updated = { ...newDraft, sync_state: 'error' as SyncState };
+        setDraft(updated);
+        await saveDraft(updated);
+        return updated;
+      }
+    }
+
+    return newDraft;
+  }, [userId, isOnline]);
 
   // Add exercise
   const addExercise = useCallback((exerciseId: string, initialSets: { weight: number; reps: number }[]) => {
@@ -306,7 +384,7 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
     updateDraft(d => deleteSetFromDraft(d, tempExerciseId, setIndex));
   }, [updateDraft]);
 
-  // Mark workout for completion (offline-safe)
+  // Mark workout for completion
   const finishWorkout = useCallback(async () => {
     if (!draft) return false;
 
@@ -339,22 +417,47 @@ export function useDraftWorkout({ userId, onRecoveryNeeded }: UseDraftWorkoutOpt
     return draft?.exercises.find(e => e.temp_session_exercise_id === tempId);
   }, [draft]);
 
-  return {
-    draft,
-    isLoading,
-    isSyncing,
-    isOnline,
-    syncState: draft?.sync_state || null,
-    startNewWorkout,
-    addExercise,
-    updateExerciseRpe,
-    updateSet,
-    addSet,
-    deleteSet,
-    finishWorkout,
-    clearDraft,
-    continueDraft,
-    syncDraftToSupabase,
-    getExercise,
-  };
+  // Load draft from server (for recovery)
+  const loadDraftFromServer = useCallback(async () => {
+    if (!userId) return;
+    loadedRef.current = false;
+    setIsLoading(true);
+  }, [userId]);
+
+  const hasActiveDraft = !!(draft && (draft.exercises.length > 0 || draft.session_id));
+
+  return (
+    <WorkoutContext.Provider
+      value={{
+        draft,
+        isLoading,
+        isSyncing,
+        isOnline,
+        syncState: draft?.sync_state || null,
+        hasActiveDraft,
+        startNewWorkout,
+        addExercise,
+        updateExerciseRpe,
+        updateSet,
+        addSet,
+        deleteSet,
+        finishWorkout,
+        clearDraft,
+        continueDraft,
+        syncDraftToSupabase,
+        getExercise,
+        loadDraftFromServer,
+      }}
+    >
+      {children}
+    </WorkoutContext.Provider>
+  );
+}
+
+export function useWorkout() {
+  const context = useContext(WorkoutContext);
+  if (context === undefined) {
+    throw new Error('useWorkout must be used within a WorkoutProvider');
+  }
+  return context;
 }
