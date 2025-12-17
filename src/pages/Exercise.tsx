@@ -11,6 +11,9 @@ import { useSets } from "@/hooks/useSessions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { SwipeableSetItem } from "@/components/SwipeableSetItem";
+import { RecommendationExplainer, ExplanationDetails } from "@/components/RecommendationExplainer";
+import { format } from 'date-fns';
+import { ru, enUS } from 'date-fns/locale';
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -56,7 +59,7 @@ export default function Exercise() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sessionExerciseId = searchParams.get('se');
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const { user } = useAuth();
   
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
@@ -70,6 +73,10 @@ export default function Exercise() {
   const [exerciseState, setExerciseState] = useState<ExerciseStateSnapshot | null>(null);
   const [previewTrigger, setPreviewTrigger] = useState(0);
   
+  // Additional context for explanation
+  const [templateName, setTemplateName] = useState<string | null>(null);
+  const [lastCompletedDate, setLastCompletedDate] = useState<string | null>(null);
+  
   // Local state for inputs
   const [weightValue, setWeightValue] = useState('');
   const [repsValue, setRepsValue] = useState('');
@@ -82,16 +89,17 @@ export default function Exercise() {
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
-  // Load session exercise data
+  // Load session exercise data and additional context
   useEffect(() => {
-    if (!sessionExerciseId) return;
+    if (!sessionExerciseId || !user) return;
     
     const loadData = async () => {
       const { data } = await supabase
         .from('session_exercises')
         .select(`
           *,
-          exercise:exercises(id, name, type, increment_kind, increment_value)
+          exercise:exercises(id, name, type, increment_kind, increment_value),
+          session:sessions(id, template_id, source)
         `)
         .eq('id', sessionExerciseId)
         .single();
@@ -99,11 +107,45 @@ export default function Exercise() {
       if (data) {
         setSessionExercise(data as SessionExerciseData);
         setCurrentRpe(data.rpe);
+        
+        // Load template name if from template
+        const session = data.session as { id: string; template_id: string | null; source: string } | null;
+        if (session?.template_id) {
+          const { data: templateData } = await supabase
+            .from('workout_templates')
+            .select('name')
+            .eq('id', session.template_id)
+            .maybeSingle();
+          if (templateData) {
+            setTemplateName(templateData.name);
+          }
+        }
+        
+        // Load last completed session date for this exercise
+        const exerciseId = (data.exercise as { id: string })?.id;
+        if (exerciseId) {
+          const { data: lastSession } = await supabase
+            .from('session_exercises')
+            .select(`
+              sessions!inner(completed_at, status)
+            `)
+            .eq('exercise_id', exerciseId)
+            .eq('sessions.status', 'completed')
+            .eq('sessions.user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          
+          if (lastSession) {
+            const sessionData = lastSession.sessions as { completed_at: string; status: string };
+            setLastCompletedDate(sessionData.completed_at);
+          }
+        }
       }
     };
     
     loadData();
-  }, [sessionExerciseId]);
+  }, [sessionExerciseId, user]);
 
   // Load preview on trigger change (debounced)
   useEffect(() => {
@@ -662,6 +704,26 @@ export default function Exercise() {
                   </p>
                   <p className="text-sm text-muted-foreground">{preview.explanation}</p>
                   
+                  {/* Explainer */}
+                  <RecommendationExplainer 
+                    details={{
+                      ...preview.explanationDetails,
+                      weightStepLabel: sessionExercise?.exercise?.increment_kind === 'dumbbell' 
+                        ? (locale === 'ru' ? 'гантели' : 'dumbbell')
+                        : sessionExercise?.exercise?.increment_kind === 'barbell'
+                        ? (locale === 'ru' ? 'штанга' : 'barbell')
+                        : '',
+                      basedOn: {
+                        source: 'current_workout',
+                        lastCompletedDate: lastCompletedDate 
+                          ? format(new Date(lastCompletedDate), 'd MMM yyyy', { locale: locale === 'ru' ? ru : enUS })
+                          : undefined,
+                        templateName: templateName || undefined,
+                      },
+                    }}
+                    className="mt-2"
+                  />
+                  
                   {/* Apply Button */}
                   <Button
                     onClick={handleApplyRecommendation}
@@ -671,11 +733,17 @@ export default function Exercise() {
                     size="sm"
                   >
                     <Check className="h-4 w-4 mr-2" />
-                    {isApplying ? 'Сохраняем...' : canApply ? 'Применить рекомендацию' : 'Уже применено'}
+                    {isApplying 
+                      ? (locale === 'ru' ? 'Сохраняем...' : 'Saving...') 
+                      : canApply 
+                      ? (locale === 'ru' ? 'Применить рекомендацию' : 'Apply recommendation') 
+                      : (locale === 'ru' ? 'Уже применено' : 'Already applied')}
                   </Button>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">Завершите подход для расчёта рекомендации</p>
+                <p className="text-sm text-muted-foreground">
+                  {locale === 'ru' ? 'Завершите подход для расчёта рекомендации' : 'Complete a set to calculate recommendation'}
+                </p>
               )}
             </div>
           </div>

@@ -31,12 +31,31 @@ const DEFAULT_REP_RANGE = {
 
 export type PreviewAction = 'increase' | 'hold' | 'stage_up' | 'lock_in' | 'volume_reduce_on' | 'volume_reduce_off'
 
+export interface ExplanationDetails {
+  currentStage: number
+  targetRange: string
+  upperBoundary: number
+  setsAnalysis: { setIndex: number; reps: number; hitTarget: boolean }[]
+  allHitUpper: boolean
+  rpe: number | null
+  rpeThreshold: number
+  rpeIsHigh: boolean
+  weightStep: number
+  weightStepLabel: string
+  successStreak: number
+  failStreak: number
+  volumeReduceOn: boolean
+  currentSets: number
+  baseSets: number
+}
+
 export interface ProgressionPreview {
   nextWeight: number
   targetRangeText: string
   repStage: number
   action: PreviewAction
   explanation: string
+  explanationDetails: ExplanationDetails
   // Full state for apply
   updatedState: {
     current_working_weight: number
@@ -194,6 +213,23 @@ function calculateProgressionInternal(
       repStage: currentStage,
       action: 'hold',
       explanation: 'Нет данных о подходах.',
+      explanationDetails: {
+        currentStage,
+        targetRange: currentRange.displayText,
+        upperBoundary: currentRange.max,
+        setsAnalysis: [],
+        allHitUpper: false,
+        rpe,
+        rpeThreshold: 8.5,
+        rpeIsHigh: false,
+        weightStep: incrementValue,
+        weightStepLabel: '',
+        successStreak: state.success_streak,
+        failStreak: state.fail_streak,
+        volumeReduceOn: state.volume_reduce_on,
+        currentSets: state.current_sets,
+        baseSets: state.base_sets,
+      },
       updatedState: {
         current_working_weight: state.current_working_weight,
         current_sets: state.current_sets,
@@ -308,12 +344,36 @@ function calculateProgressionInternal(
   const newRange = newRepStage === 1 ? repRanges.stage1 : repRanges.stage2
   const targetRangeText = newRange.displayText
 
+  // Build explanation details
+  const setsAnalysis = workingSets.map(s => ({
+    setIndex: s.set_index,
+    reps: s.reps,
+    hitTarget: s.reps >= currentRange.max,
+  }))
+
   return {
     nextWeight,
     targetRangeText,
     repStage: newRepStage,
     action,
     explanation: explanation.trim(),
+    explanationDetails: {
+      currentStage,
+      targetRange: currentRange.displayText,
+      upperBoundary: currentRange.max,
+      setsAnalysis,
+      allHitUpper: allAtOrAboveMax,
+      rpe,
+      rpeThreshold: 8.5,
+      rpeIsHigh: rpeHigh,
+      weightStep: incrementValue,
+      weightStepLabel: '',
+      successStreak: newSuccessStreak,
+      failStreak: newFailStreak,
+      volumeReduceOn: newVolumeReduceOn,
+      currentSets: newCurrentSets,
+      baseSets: state.base_sets,
+    },
     updatedState: {
       current_working_weight: nextWeight,
       current_sets: newCurrentSets,
