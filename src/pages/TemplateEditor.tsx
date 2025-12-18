@@ -19,6 +19,7 @@ import { useTemplate, useTemplateItems, useTemplates } from "@/hooks/useTemplate
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { Exercise } from "@/hooks/useExercises";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkout } from "@/contexts/WorkoutContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -31,6 +32,7 @@ export default function TemplateEditor() {
   const { data: template, isLoading: isLoadingTemplate } = useTemplate(templateId);
   const { items, isLoading: isLoadingItems, addItem, updateItem, deleteItem, reorderItems, isAdding } = useTemplateItems(templateId);
   const { updateTemplate, deleteTemplate, isDeleting } = useTemplates();
+  const { setActiveSession, hasActiveDraft, clearDraft, activeSessionId } = useWorkout();
   
   const [templateName, setTemplateName] = useState('');
   const [showPicker, setShowPicker] = useState(false);
@@ -129,6 +131,18 @@ export default function TemplateEditor() {
       return;
     }
 
+    // If there's an active draft, warn user
+    if (hasActiveDraft) {
+      const confirmed = window.confirm(
+        'У вас есть незавершённая тренировка. Создать новую?'
+      );
+      if (!confirmed) return;
+      await clearDraft();
+      if (activeSessionId) {
+        await supabase.from('sessions').delete().eq('id', activeSessionId);
+      }
+    }
+
     setIsStarting(true);
     try {
       // Create session from template
@@ -200,6 +214,9 @@ export default function TemplateEditor() {
 
         await supabase.from('sets').insert(sets);
       }
+
+      // Update workout context with new session
+      await setActiveSession(session.id);
 
       toast.success('Тренировка создана');
       navigate(`/workout?session=${session.id}`);

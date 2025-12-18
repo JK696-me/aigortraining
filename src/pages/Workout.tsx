@@ -28,7 +28,19 @@ export default function Workout() {
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
 
-  const { syncState, isOnline, isSyncing, syncDraftToSupabase, clearDraft } = useWorkout();
+  const { syncState, isOnline, isSyncing, syncDraftToSupabase, clearDraft, refreshActiveSession } = useWorkout();
+
+  // Refresh active session on visibility change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshActiveSession();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [refreshActiveSession]);
 
   // Timer
   useEffect(() => {

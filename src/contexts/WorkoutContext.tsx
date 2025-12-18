@@ -25,7 +25,9 @@ interface WorkoutContextType {
   isOnline: boolean;
   syncState: SyncState | null;
   hasActiveDraft: boolean;
+  activeSessionId: string | null;
   startNewWorkout: (source?: string, templateId?: string | null) => Promise<DraftWorkout | null>;
+  setActiveSession: (sessionId: string, draft?: DraftWorkout) => Promise<void>;
   addExercise: (exerciseId: string, initialSets: { weight: number; reps: number }[]) => void;
   updateExerciseRpe: (tempId: string, rpe: number | null) => void;
   updateSet: (tempExerciseId: string, setIndex: number, updates: { weight?: number; reps?: number }) => void;
@@ -37,6 +39,7 @@ interface WorkoutContextType {
   syncDraftToSupabase: () => Promise<boolean>;
   getExercise: (tempId: string) => DraftExercise | undefined;
   loadDraftFromServer: () => Promise<void>;
+  refreshActiveSession: () => Promise<void>;
 }
 
 const WorkoutContext = createContext<WorkoutContextType | undefined>(undefined);
@@ -407,6 +410,68 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     setDraft(null);
   }, [userId]);
 
+  // Set active session (for external session creation like repeat/template)
+  const setActiveSession = useCallback(async (sessionId: string, existingDraft?: DraftWorkout) => {
+    if (!userId) return;
+    
+    if (existingDraft) {
+      const updatedDraft = { ...existingDraft, session_id: sessionId, sync_state: 'synced' as SyncState };
+      setDraft(updatedDraft);
+      await saveDraft(updatedDraft);
+    } else {
+      // Load session data from server and create draft
+      const { data: serverSession } = await supabase
+        .from('sessions')
+        .select('id, date, source, template_id')
+        .eq('id', sessionId)
+        .single();
+
+      if (serverSession) {
+        const { data: serverExercises } = await supabase
+          .from('session_exercises')
+          .select('id, exercise_id, rpe')
+          .eq('session_id', sessionId);
+
+        const exercises: DraftExercise[] = [];
+        
+        for (const se of serverExercises || []) {
+          const { data: sets } = await supabase
+            .from('sets')
+            .select('set_index, weight, reps')
+            .eq('session_exercise_id', se.id)
+            .order('set_index');
+
+          exercises.push({
+            temp_session_exercise_id: se.id,
+            exercise_id: se.exercise_id,
+            rpe: se.rpe,
+            sets: sets?.map(s => ({
+              set_index: s.set_index,
+              weight: s.weight,
+              reps: s.reps,
+            })) || [],
+          });
+        }
+
+        const newDraft: DraftWorkout = {
+          user_id: userId,
+          session_id: sessionId,
+          started_at: serverSession.date,
+          session: {
+            source: serverSession.source,
+            template_id: serverSession.template_id,
+          },
+          exercises,
+          last_saved_at: new Date().toISOString(),
+          sync_state: 'synced',
+        };
+
+        setDraft(newDraft);
+        await saveDraft(newDraft);
+      }
+    }
+  }, [userId]);
+
   // Continue from existing draft
   const continueDraft = useCallback((existingDraft: DraftWorkout) => {
     setDraft(existingDraft);
@@ -424,7 +489,52 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
   }, [userId]);
 
+  // Refresh active session - check if draft is still valid
+  const refreshActiveSession = useCallback(async () => {
+    if (!userId) return;
+
+    // First check local draft
+    const localDraft = await getDraft(userId);
+    
+    if (localDraft?.session_id) {
+      // Verify session still exists and is draft status
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('id, status')
+        .eq('id', localDraft.session_id)
+        .maybeSingle();
+
+      if (session && session.status === 'draft') {
+        setDraft(localDraft);
+        return;
+      } else {
+        // Session completed or deleted, clear local draft
+        await deleteDraft(userId);
+        setDraft(null);
+      }
+    } else if (!localDraft) {
+      // No local draft, check for server draft
+      const { data: serverDraft } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (serverDraft) {
+        await setActiveSession(serverDraft.id);
+      } else {
+        setDraft(null);
+      }
+    } else {
+      setDraft(localDraft);
+    }
+  }, [userId, setActiveSession]);
+
   const hasActiveDraft = !!(draft && (draft.exercises.length > 0 || draft.session_id));
+  const activeSessionId = draft?.session_id || null;
 
   return (
     <WorkoutContext.Provider
@@ -435,7 +545,9 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         isOnline,
         syncState: draft?.sync_state || null,
         hasActiveDraft,
+        activeSessionId,
         startNewWorkout,
+        setActiveSession,
         addExercise,
         updateExerciseRpe,
         updateSet,
@@ -447,6 +559,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         syncDraftToSupabase,
         getExercise,
         loadDraftFromServer,
+        refreshActiveSession,
       }}
     >
       {children}
