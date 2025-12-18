@@ -75,7 +75,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     };
   }, [draft]);
 
-  // Load draft on mount - check local first, then server
+  // Load draft on mount - ONLY validate existing local draft
   useEffect(() => {
     if (!userId || loadedRef.current) {
       setIsLoading(false);
@@ -85,71 +85,32 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     const loadDraft = async () => {
       loadedRef.current = true;
       
-      // 1. Check local draft first (source of truth)
+      // Check local draft first
       const localDraft = await getDraft(userId);
-      if (localDraft && localDraft.exercises.length > 0) {
-        setDraft(localDraft);
-        setIsLoading(false);
-        return;
-      }
+      
+      if (localDraft?.session_id) {
+        // CRITICAL: Verify session is still draft on server
+        const { data: session } = await supabase
+          .from('sessions')
+          .select('id, status')
+          .eq('id', localDraft.session_id)
+          .maybeSingle();
 
-      // 2. Check for server-side draft session
-      const { data: serverDraft } = await supabase
-        .from('sessions')
-        .select('id, date, source, template_id')
-        .eq('user_id', userId)
-        .eq('status', 'draft')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (serverDraft) {
-        // Restore from server to local
-        const { data: serverExercises } = await supabase
-          .from('session_exercises')
-          .select(`
-            id,
-            exercise_id,
-            rpe
-          `)
-          .eq('session_id', serverDraft.id);
-
-        const exercises: DraftExercise[] = [];
-        
-        for (const se of serverExercises || []) {
-          const { data: sets } = await supabase
-            .from('sets')
-            .select('set_index, weight, reps')
-            .eq('session_exercise_id', se.id)
-            .order('set_index');
-
-          exercises.push({
-            temp_session_exercise_id: se.id,
-            exercise_id: se.exercise_id,
-            rpe: se.rpe,
-            sets: sets?.map(s => ({
-              set_index: s.set_index,
-              weight: s.weight,
-              reps: s.reps,
-            })) || [],
-          });
+        if (session && session.status === 'draft') {
+          // Valid draft session exists
+          setDraft(localDraft);
+        } else {
+          // Session completed/deleted - HARD CLEAR local draft
+          console.log('[WorkoutContext] Session not draft, clearing local draft');
+          await deleteDraft(userId);
+          setDraft(null);
         }
-
-        const restoredDraft: DraftWorkout = {
-          user_id: userId,
-          session_id: serverDraft.id,
-          started_at: serverDraft.date,
-          session: {
-            source: serverDraft.source,
-            template_id: serverDraft.template_id,
-          },
-          exercises,
-          last_saved_at: new Date().toISOString(),
-          sync_state: 'synced',
-        };
-
-        setDraft(restoredDraft);
-        await saveDraft(restoredDraft);
+      } else if (localDraft && !localDraft.session_id) {
+        // Local draft without session_id (offline created) - keep it
+        setDraft(localDraft);
+      } else {
+        // No local draft - do NOT auto-create from server
+        setDraft(null);
       }
 
       setIsLoading(false);
@@ -186,6 +147,22 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     });
   }, [scheduleSave]);
 
+  // HARD CLEAR - complete cleanup of all draft state
+  const hardClearDraft = useCallback(async (reason: string) => {
+    if (!userId) return;
+    
+    console.log(`[WorkoutContext] hardClearDraft called: ${reason}`);
+    
+    // 1. Clear local IndexedDB/localStorage draft
+    await deleteDraft(userId);
+    
+    // 2. Clear React state
+    setDraft(null);
+    
+    // 3. Invalidate queries
+    queryClient.invalidateQueries({ queryKey: ['sessions'] });
+  }, [userId, queryClient]);
+
   // Sync entire draft to Supabase
   const syncDraftToSupabase = useCallback(async (): Promise<boolean> => {
     if (!draft || !userId || !isOnline) return false;
@@ -196,20 +173,35 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
 
       // A) Create session if doesn't exist
       if (!currentDraft.session_id) {
-        const { data: session, error } = await supabase
+        // DEDUPLICATION: Check for existing draft session first
+        const { data: existingDraft } = await supabase
           .from('sessions')
-          .insert({
-            user_id: userId,
-            date: currentDraft.started_at,
-            source: currentDraft.session.source,
-            template_id: currentDraft.session.template_id,
-            status: 'draft',
-          })
-          .select()
-          .single();
+          .select('id')
+          .eq('user_id', userId)
+          .eq('status', 'draft')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-        if (error) throw error;
-        currentDraft.session_id = session.id;
+        if (existingDraft) {
+          // Use existing draft instead of creating new one
+          currentDraft.session_id = existingDraft.id;
+        } else {
+          const { data: session, error } = await supabase
+            .from('sessions')
+            .insert({
+              user_id: userId,
+              date: currentDraft.started_at,
+              source: currentDraft.session.source,
+              template_id: currentDraft.session.template_id,
+              status: 'draft',
+            })
+            .select()
+            .single();
+
+          if (error) throw error;
+          currentDraft.session_id = session.id;
+        }
       }
 
       // B) Sync exercises and sets
@@ -280,7 +272,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // C) Handle pending complete
+      // C) Handle pending complete - HARD CLEANUP
       if (currentDraft.pending_complete) {
         await supabase
           .from('sessions')
@@ -290,9 +282,8 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
           })
           .eq('id', currentDraft.session_id);
 
-        await deleteDraft(userId);
-        setDraft(null);
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        // HARD CLEAR after completion
+        await hardClearDraft('workout_completed');
         return true;
       }
 
@@ -316,11 +307,30 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [draft, userId, isOnline, queryClient]);
+  }, [draft, userId, isOnline, queryClient, hardClearDraft]);
 
-  // Create new workout
+  // Create new workout - WITH DEDUPLICATION
   const startNewWorkout = useCallback(async (source: string = 'empty', templateId?: string | null): Promise<DraftWorkout | null> => {
     if (!userId) return null;
+
+    // DEDUPLICATION: Check for existing draft session first
+    if (isOnline) {
+      const { data: existingDraft } = await supabase
+        .from('sessions')
+        .select('id, date, source, template_id')
+        .eq('user_id', userId)
+        .eq('status', 'draft')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingDraft) {
+        console.log('[WorkoutContext] Found existing draft, reusing:', existingDraft.id);
+        // Load and return existing draft instead of creating new
+        await setActiveSession(existingDraft.id);
+        return draft;
+      }
+    }
 
     const newDraft = createNewDraft(userId, source, templateId);
     setDraft(newDraft);
@@ -360,7 +370,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     }
 
     return newDraft;
-  }, [userId, isOnline]);
+  }, [userId, isOnline, draft]);
 
   // Add exercise
   const addExercise = useCallback((exerciseId: string, initialSets: { weight: number; reps: number }[]) => {
@@ -403,12 +413,10 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     return true;
   }, [draft, isOnline, syncDraftToSupabase]);
 
-  // Clear draft
+  // Clear draft (public API - uses hardClearDraft)
   const clearDraft = useCallback(async () => {
-    if (!userId) return;
-    await deleteDraft(userId);
-    setDraft(null);
-  }, [userId]);
+    await hardClearDraft('user_action');
+  }, [hardClearDraft]);
 
   // Set active session (for external session creation like repeat/template)
   const setActiveSession = useCallback(async (sessionId: string, existingDraft?: DraftWorkout) => {
@@ -422,11 +430,12 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       // Load session data from server and create draft
       const { data: serverSession } = await supabase
         .from('sessions')
-        .select('id, date, source, template_id')
+        .select('id, date, source, template_id, status')
         .eq('id', sessionId)
         .single();
 
-      if (serverSession) {
+      // CRITICAL: Only load if session is actually draft
+      if (serverSession && serverSession.status === 'draft') {
         const { data: serverExercises } = await supabase
           .from('session_exercises')
           .select('id, exercise_id, rpe')
@@ -468,6 +477,9 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
 
         setDraft(newDraft);
         await saveDraft(newDraft);
+      } else {
+        // Session not draft - do not set active
+        console.log('[WorkoutContext] setActiveSession: session not draft, ignoring');
       }
     }
   }, [userId]);
@@ -489,15 +501,21 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
   }, [userId]);
 
-  // Refresh active session - check if draft is still valid
+  // Refresh active session - ONLY validate existing local draft
   const refreshActiveSession = useCallback(async () => {
     if (!userId) return;
 
-    // First check local draft
+    // Check local draft
     const localDraft = await getDraft(userId);
     
-    if (localDraft?.session_id) {
-      // Verify session still exists and is draft status
+    if (!localDraft) {
+      // No local draft - just clear state, do NOT auto-fetch from server
+      setDraft(null);
+      return;
+    }
+
+    if (localDraft.session_id) {
+      // Verify session is still draft on server
       const { data: session } = await supabase
         .from('sessions')
         .select('id, status')
@@ -505,35 +523,21 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (session && session.status === 'draft') {
+        // Valid - update state
         setDraft(localDraft);
-        return;
       } else {
-        // Session completed or deleted, clear local draft
-        await deleteDraft(userId);
-        setDraft(null);
-      }
-    } else if (!localDraft) {
-      // No local draft, check for server draft
-      const { data: serverDraft } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('status', 'draft')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (serverDraft) {
-        await setActiveSession(serverDraft.id);
-      } else {
-        setDraft(null);
+        // Session completed/deleted - HARD CLEAR
+        console.log('[WorkoutContext] refreshActiveSession: session not draft, clearing');
+        await hardClearDraft('server_not_draft');
       }
     } else {
+      // Local draft without session_id (offline) - keep it
       setDraft(localDraft);
     }
-  }, [userId, setActiveSession]);
+  }, [userId, hardClearDraft]);
 
-  const hasActiveDraft = !!(draft && (draft.exercises.length > 0 || draft.session_id));
+  // hasActiveDraft: ONLY true if we have a session_id that we believe is draft
+  const hasActiveDraft = !!(draft?.session_id);
   const activeSessionId = draft?.session_id || null;
 
   return (
