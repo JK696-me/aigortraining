@@ -1,11 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play, RotateCcw, Plus, ChevronRight, Zap, Loader2, FileText, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useSessions } from "@/hooks/useSessions";
 import { useTemplates } from "@/hooks/useTemplates";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -16,30 +15,69 @@ export default function Home() {
   const navigate = useNavigate();
   const { t, locale } = useLanguage();
   const { user } = useAuth();
-  const { createSession, isCreating } = useSessions();
   const { templates, isLoading: isLoadingTemplates } = useTemplates();
   const [isRepeating, setIsRepeating] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   
-  const { draft, hasActiveDraft, isLoading: isDraftLoading, clearDraft } = useWorkout();
+  const { 
+    draft, 
+    hasActiveDraft, 
+    activeSessionId,
+    isLoading: isDraftLoading, 
+    clearDraft, 
+    startNewWorkout,
+    setActiveSession,
+    refreshActiveSession 
+  } = useWorkout();
+
+  // Refresh active session on focus
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshActiveSession();
+      }
+    };
+
+    const handleFocus = () => {
+      refreshActiveSession();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    // Also refresh on mount
+    refreshActiveSession();
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [refreshActiveSession]);
 
   const handleContinueWorkout = () => {
-    if (draft?.session_id) {
-      navigate(`/workout?session=${draft.session_id}`);
+    if (activeSessionId) {
+      navigate(`/workout?session=${activeSessionId}`);
     }
   };
 
   const handleStartWorkout = async () => {
-    // If there's an active draft, ask to continue or discard
-    if (hasActiveDraft && draft?.session_id) {
-      navigate(`/workout?session=${draft.session_id}`);
+    // If there's an active draft, continue it
+    if (hasActiveDraft && activeSessionId) {
+      navigate(`/workout?session=${activeSessionId}`);
       return;
     }
 
+    setIsStarting(true);
     try {
-      const session = await createSession('empty');
-      navigate(`/workout?session=${session.id}`);
+      const newDraft = await startNewWorkout('empty');
+      if (newDraft?.session_id) {
+        navigate(`/workout?session=${newDraft.session_id}`);
+      }
     } catch (error) {
       console.error('Failed to create session:', error);
+      toast.error('Failed to start workout');
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -128,6 +166,9 @@ export default function Home() {
         }
       }
 
+      // Update the workout context with the new session
+      await setActiveSession(newSession.id);
+
       navigate(`/workout?session=${newSession.id}`);
     } catch (error) {
       console.error('Failed to repeat workout:', error);
@@ -150,7 +191,7 @@ export default function Home() {
         </div>
 
         {/* Continue Active Workout Button */}
-        {hasActiveDraft && draft?.session_id && (
+        {hasActiveDraft && activeSessionId && (
           <Card className="p-4 mb-6 bg-primary/10 border-primary/30">
             <div className="flex items-center justify-between">
               <div>
@@ -159,8 +200,8 @@ export default function Home() {
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   {locale === 'ru' 
-                    ? `${draft.exercises.length} упражнений` 
-                    : `${draft.exercises.length} exercises`}
+                    ? `${draft?.exercises.length || 0} упражнений` 
+                    : `${draft?.exercises.length || 0} exercises`}
                 </p>
               </div>
               <Button onClick={handleContinueWorkout} className="bg-primary hover:bg-primary/90">
@@ -175,11 +216,11 @@ export default function Home() {
         <div className="space-y-3 mb-8">
           <Button
             onClick={handleStartWorkout}
-            disabled={isCreating}
+            disabled={isStarting}
             className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground animate-pulse-glow"
             size="lg"
           >
-            {isCreating ? (
+            {isStarting ? (
               <Loader2 className="h-6 w-6 mr-3 animate-spin" />
             ) : (
               <Play className="h-6 w-6 mr-3" />
