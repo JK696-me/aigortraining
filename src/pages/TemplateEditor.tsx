@@ -145,6 +145,20 @@ export default function TemplateEditor() {
 
     setIsStarting(true);
     try {
+      // DEDUPLICATION: Check for any remaining draft sessions
+      const { data: existingDraft } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'draft')
+        .limit(1)
+        .maybeSingle();
+
+      if (existingDraft) {
+        // Delete orphaned draft
+        await supabase.from('sessions').delete().eq('id', existingDraft.id);
+      }
+
       // Create session from template
       const { data: session, error: sessionError } = await supabase
         .from('sessions')

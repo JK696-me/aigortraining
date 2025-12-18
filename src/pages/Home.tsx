@@ -95,10 +95,12 @@ export default function Home() {
           : 'You have an unfinished workout. Create a new one?'
       );
       if (!confirmed) return;
-      await clearDraft();
-      if (draft?.session_id) {
-        await supabase.from('sessions').delete().eq('id', draft.session_id);
+      
+      // Delete existing draft session from server
+      if (activeSessionId) {
+        await supabase.from('sessions').delete().eq('id', activeSessionId);
       }
+      await clearDraft();
     }
 
     setIsRepeating(true);
@@ -116,6 +118,20 @@ export default function Home() {
         toast.error(t('noLastWorkout'));
         setIsRepeating(false);
         return;
+      }
+
+      // DEDUPLICATION: Check for any remaining draft sessions
+      const { data: existingDraft } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'draft')
+        .limit(1)
+        .maybeSingle();
+
+      if (existingDraft) {
+        // Delete orphaned draft
+        await supabase.from('sessions').delete().eq('id', existingDraft.id);
       }
 
       const { data: newSession, error: sessionError } = await supabase
