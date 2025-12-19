@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Check, ChevronRight, Timer, Dumbbell, ArrowLeft } from "lucide-react";
+import { useNavigate } from 'react-router-dom';
+import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSession, useSessionExercises } from "@/hooks/useSessions";
+import { useSessionExercises } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -17,20 +17,35 @@ import { useWorkout } from "@/contexts/WorkoutContext";
 
 export default function Workout() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const sessionId = searchParams.get('session');
   const { t, locale } = useLanguage();
   const { user } = useAuth();
   
-  const { data: session } = useSession(sessionId);
+  const { 
+    activeSessionId,
+    hasActiveDraft,
+    syncState, 
+    isOnline, 
+    isSyncing, 
+    isLoading: isDraftLoading,
+    syncDraftToSupabase, 
+    clearDraft, 
+    refreshActiveSession,
+    startNewWorkout,
+    setActiveSession,
+  } = useWorkout();
+  
+  // Use activeSessionId from context, NOT from query params
+  const sessionId = activeSessionId;
+  
   const { exercises: sessionExercises, isLoading, addExercise } = useSessionExercises(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isRepeating, setIsRepeating] = useState(false);
+  const [sessionStartTime, setSessionStartTime] = useState<string | null>(null);
 
-  const { syncState, isOnline, isSyncing, syncDraftToSupabase, clearDraft, refreshActiveSession } = useWorkout();
-
-  // Refresh active session on visibility change
+  // Refresh active session on mount and visibility change
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -38,21 +53,56 @@ export default function Workout() {
       }
     };
 
+    const handleFocus = () => {
+      refreshActiveSession();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    
+    // Also refresh on mount
+    refreshActiveSession();
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [refreshActiveSession]);
+
+  // Fetch session start time for timer
+  useEffect(() => {
+    if (!sessionId) {
+      setSessionStartTime(null);
+      setWorkoutTime(0);
+      return;
+    }
+
+    const fetchSession = async () => {
+      const { data } = await supabase
+        .from('sessions')
+        .select('date')
+        .eq('id', sessionId)
+        .single();
+      
+      if (data) {
+        setSessionStartTime(data.date);
+      }
+    };
+
+    fetchSession();
+  }, [sessionId]);
 
   // Timer
   useEffect(() => {
-    if (!session) return;
+    if (!sessionStartTime) return;
     
-    const startTime = new Date(session.date).getTime();
+    const startTime = new Date(sessionStartTime).getTime();
     const interval = setInterval(() => {
       setWorkoutTime(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [session]);
+  }, [sessionStartTime]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -149,22 +199,178 @@ export default function Workout() {
     }
   };
 
-  if (!sessionId) {
+  const handleStartWorkout = async () => {
+    setIsStarting(true);
+    try {
+      const newDraft = await startNewWorkout('empty');
+      if (newDraft?.session_id) {
+        // Session is now active, component will re-render with activeSessionId
+      }
+    } catch (error) {
+      console.error('Failed to create session:', error);
+      toast.error('Failed to start workout');
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const handleRepeatLastWorkout = async () => {
+    if (!user) {
+      toast.error(t('noLastWorkout'));
+      return;
+    }
+
+    setIsRepeating(true);
+    try {
+      const { data: lastSession, error: lastError } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (lastError || !lastSession) {
+        toast.error(t('noLastWorkout'));
+        setIsRepeating(false);
+        return;
+      }
+
+      // DEDUPLICATION: Check for any remaining draft sessions
+      const { data: existingDraft } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'draft')
+        .limit(1)
+        .maybeSingle();
+
+      if (existingDraft) {
+        // Delete orphaned draft
+        await supabase.from('sessions').delete().eq('id', existingDraft.id);
+      }
+
+      const { data: newSession, error: sessionError } = await supabase
+        .from('sessions')
+        .insert({
+          user_id: user.id,
+          date: new Date().toISOString(),
+          source: 'repeat',
+          status: 'draft',
+        })
+        .select()
+        .single();
+
+      if (sessionError) throw sessionError;
+
+      const { data: lastExercises } = await supabase
+        .from('session_exercises')
+        .select('*')
+        .eq('session_id', lastSession.id);
+
+      for (const se of lastExercises || []) {
+        const { data: newSe } = await supabase
+          .from('session_exercises')
+          .insert({
+            session_id: newSession.id,
+            exercise_id: se.exercise_id,
+          })
+          .select()
+          .single();
+
+        if (!newSe) continue;
+
+        const { data: lastSets } = await supabase
+          .from('sets')
+          .select('*')
+          .eq('session_exercise_id', se.id)
+          .order('set_index');
+
+        if (lastSets && lastSets.length > 0) {
+          const newSets = lastSets.map(s => ({
+            session_exercise_id: newSe.id,
+            set_index: s.set_index,
+            weight: s.weight,
+            reps: s.reps,
+          }));
+
+          await supabase.from('sets').insert(newSets);
+        }
+      }
+
+      // Update the workout context with the new session
+      await setActiveSession(newSession.id);
+    } catch (error) {
+      console.error('Failed to repeat workout:', error);
+      toast.error('Failed to repeat workout');
+    } finally {
+      setIsRepeating(false);
+    }
+  };
+
+  // Show loading state while checking for active session
+  if (isDraftLoading) {
     return (
       <Layout>
         <div className="px-4 pt-12 safe-top flex flex-col items-center justify-center min-h-[60vh]">
-          <Dumbbell className="h-16 w-16 text-muted-foreground mb-4" />
-          <h2 className="text-xl font-semibold text-foreground mb-2">{t('noActiveSession')}</h2>
-          <p className="text-muted-foreground mb-6">{t('startNewWorkout')}</p>
-          <Button onClick={() => navigate('/')}>
-            <ArrowLeft className="h-5 w-5 mr-2" />
-            {t('home')}
-          </Button>
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
       </Layout>
     );
   }
 
+  // No active session - show empty state with start options
+  if (!sessionId || !hasActiveDraft) {
+    return (
+      <Layout>
+        <div className="px-4 pt-12 safe-top flex flex-col items-center justify-center min-h-[60vh]">
+          <Dumbbell className="h-16 w-16 text-muted-foreground mb-4" />
+          <h2 className="text-xl font-semibold text-foreground mb-2">
+            {locale === 'ru' ? 'Нет активной тренировки' : 'No Active Workout'}
+          </h2>
+          <p className="text-muted-foreground mb-8 text-center">
+            {locale === 'ru' 
+              ? 'Начните новую тренировку или повторите предыдущую' 
+              : 'Start a new workout or repeat your last one'}
+          </p>
+          
+          <div className="w-full max-w-sm space-y-3">
+            <Button
+              onClick={handleStartWorkout}
+              disabled={isStarting}
+              className="w-full h-14 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
+              size="lg"
+            >
+              {isStarting ? (
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              ) : (
+                <Play className="h-5 w-5 mr-2" />
+              )}
+              {t('startWorkout')}
+            </Button>
+
+            <Button
+              onClick={handleRepeatLastWorkout}
+              disabled={isRepeating}
+              variant="secondary"
+              className="w-full h-12 text-base font-medium"
+              size="lg"
+            >
+              {isRepeating ? (
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+              ) : (
+                <RotateCcw className="h-5 w-5 mr-2" />
+              )}
+              {t('repeatLastWorkout')}
+            </Button>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  // Active workout screen
   return (
     <Layout>
       <div className="px-4 pt-12 safe-top pb-24">
