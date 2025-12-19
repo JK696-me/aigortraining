@@ -160,14 +160,19 @@ export default function TemplateEditor() {
       }
 
       // Create session from template
+      const now = new Date().toISOString();
       const { data: session, error: sessionError } = await supabase
         .from('sessions')
         .insert({
           user_id: user.id,
-          date: new Date().toISOString(),
+          date: now,
           source: 'template',
           template_id: templateId,
           status: 'draft',
+          started_at: now,
+          timer_last_started_at: now,
+          elapsed_seconds: 0,
+          timer_running: true,
         })
         .select()
         .single();

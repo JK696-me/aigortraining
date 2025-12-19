@@ -133,13 +133,18 @@ export default function Home() {
         await supabase.from('sessions').delete().eq('id', existingDraft.id);
       }
 
+      const now = new Date().toISOString();
       const { data: newSession, error: sessionError } = await supabase
         .from('sessions')
         .insert({
           user_id: user.id,
-          date: new Date().toISOString(),
+          date: now,
           source: 'repeat',
           status: 'draft',
+          started_at: now,
+          timer_last_started_at: now,
+          elapsed_seconds: 0,
+          timer_running: true,
         })
         .select()
         .single();
