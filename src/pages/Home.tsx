@@ -55,15 +55,14 @@ export default function Home() {
   }, [refreshActiveSession]);
 
   const handleContinueWorkout = () => {
-    if (activeSessionId) {
-      navigate(`/workout?session=${activeSessionId}`);
-    }
+    // Simply navigate to workout tab - it will show active session from context
+    navigate('/workout');
   };
 
   const handleStartWorkout = async () => {
-    // If there's an active draft, continue it
+    // If there's an active draft, just navigate to workout tab
     if (hasActiveDraft && activeSessionId) {
-      navigate(`/workout?session=${activeSessionId}`);
+      navigate('/workout');
       return;
     }
 
@@ -71,7 +70,7 @@ export default function Home() {
     try {
       const newDraft = await startNewWorkout('empty');
       if (newDraft?.session_id) {
-        navigate(`/workout?session=${newDraft.session_id}`);
+        navigate('/workout');
       }
     } catch (error) {
       console.error('Failed to create session:', error);
@@ -185,7 +184,7 @@ export default function Home() {
       // Update the workout context with the new session
       await setActiveSession(newSession.id);
 
-      navigate(`/workout?session=${newSession.id}`);
+      navigate('/workout');
     } catch (error) {
       console.error('Failed to repeat workout:', error);
       toast.error('Failed to repeat workout');

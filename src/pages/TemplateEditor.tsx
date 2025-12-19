@@ -233,7 +233,7 @@ export default function TemplateEditor() {
       await setActiveSession(session.id);
 
       toast.success('Тренировка создана');
-      navigate(`/workout?session=${session.id}`);
+      navigate('/workout');
     } catch (error) {
       console.error('Failed to start workout:', error);
       toast.error('Ошибка создания тренировки');
