@@ -187,6 +187,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
           // Use existing draft instead of creating new one
           currentDraft.session_id = existingDraft.id;
         } else {
+          const now = new Date().toISOString();
           const { data: session, error } = await supabase
             .from('sessions')
             .insert({
@@ -195,6 +196,10 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
               source: currentDraft.session.source,
               template_id: currentDraft.session.template_id,
               status: 'draft',
+              started_at: now,
+              timer_last_started_at: now,
+              elapsed_seconds: 0,
+              timer_running: true,
             })
             .select()
             .single();
@@ -338,6 +343,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
 
     if (isOnline) {
       try {
+        const now = new Date().toISOString();
         const { data: session, error } = await supabase
           .from('sessions')
           .insert({
@@ -346,6 +352,10 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
             source: newDraft.session.source,
             template_id: newDraft.session.template_id,
             status: 'draft',
+            started_at: now,
+            timer_last_started_at: now,
+            elapsed_seconds: 0,
+            timer_running: true,
           })
           .select()
           .single();

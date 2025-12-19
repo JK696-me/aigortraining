@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2 } from "lucide-react";
+import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
@@ -14,6 +14,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
 import { useWorkout } from "@/contexts/WorkoutContext";
+
+interface SessionTimerData {
+  elapsed_seconds: number;
+  timer_running: boolean;
+  timer_last_started_at: string | null;
+}
 
 export default function Workout() {
   const navigate = useNavigate();
@@ -34,7 +40,6 @@ export default function Workout() {
     setActiveSession,
   } = useWorkout();
   
-  // Use activeSessionId from context, NOT from query params
   const sessionId = activeSessionId;
   
   const { exercises: sessionExercises, isLoading, addExercise } = useSessionExercises(sessionId);
@@ -43,7 +48,11 @@ export default function Workout() {
   const [isFinishing, setIsFinishing] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isRepeating, setIsRepeating] = useState(false);
-  const [sessionStartTime, setSessionStartTime] = useState<string | null>(null);
+  const [timerData, setTimerData] = useState<SessionTimerData | null>(null);
+  const [lastCompletedSessionId, setLastCompletedSessionId] = useState<string | null>(null);
+  const [undoAvailableUntil, setUndoAvailableUntil] = useState<Date | null>(null);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const undoToastIdRef = useRef<string | number | null>(null);
 
   // Refresh active session on mount and visibility change
   useEffect(() => {
@@ -59,8 +68,6 @@ export default function Workout() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
-    
-    // Also refresh on mount
     refreshActiveSession();
 
     return () => {
@@ -69,40 +76,70 @@ export default function Workout() {
     };
   }, [refreshActiveSession]);
 
-  // Fetch session start time for timer
+  // Fetch session timer data
   useEffect(() => {
     if (!sessionId) {
-      setSessionStartTime(null);
+      setTimerData(null);
       setWorkoutTime(0);
       return;
     }
 
-    const fetchSession = async () => {
+    const fetchTimerData = async () => {
       const { data } = await supabase
         .from('sessions')
-        .select('date')
+        .select('elapsed_seconds, timer_running, timer_last_started_at')
         .eq('id', sessionId)
         .single();
       
       if (data) {
-        setSessionStartTime(data.date);
+        setTimerData({
+          elapsed_seconds: data.elapsed_seconds || 0,
+          timer_running: data.timer_running ?? true,
+          timer_last_started_at: data.timer_last_started_at,
+        });
       }
     };
 
-    fetchSession();
+    fetchTimerData();
   }, [sessionId]);
 
-  // Timer
+  // Server-based timer calculation
   useEffect(() => {
-    if (!sessionStartTime) return;
-    
-    const startTime = new Date(sessionStartTime).getTime();
-    const interval = setInterval(() => {
-      setWorkoutTime(Math.floor((Date.now() - startTime) / 1000));
-    }, 1000);
+    if (!timerData) return;
 
+    const calculateTime = () => {
+      let total = timerData.elapsed_seconds;
+      if (timerData.timer_running && timerData.timer_last_started_at) {
+        const lastStart = new Date(timerData.timer_last_started_at).getTime();
+        const now = Date.now();
+        total += Math.floor((now - lastStart) / 1000);
+      }
+      setWorkoutTime(total);
+    };
+
+    calculateTime();
+    const interval = setInterval(calculateTime, 1000);
     return () => clearInterval(interval);
-  }, [sessionStartTime]);
+  }, [timerData]);
+
+  // Dismiss undo toast when undo window expires
+  useEffect(() => {
+    if (!undoAvailableUntil) return;
+
+    const checkExpiry = () => {
+      if (new Date() > undoAvailableUntil) {
+        if (undoToastIdRef.current) {
+          toast.dismiss(undoToastIdRef.current);
+          undoToastIdRef.current = null;
+        }
+        setUndoAvailableUntil(null);
+        setLastCompletedSessionId(null);
+      }
+    };
+
+    const interval = setInterval(checkExpiry, 1000);
+    return () => clearInterval(interval);
+  }, [undoAvailableUntil]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -114,7 +151,6 @@ export default function Workout() {
     if (!sessionId) return;
 
     try {
-      // Get exercise state for initial sets count
       const { data: exerciseState } = await supabase
         .from('exercise_state')
         .select('current_sets')
@@ -123,7 +159,6 @@ export default function Workout() {
 
       const setsCount = exerciseState?.current_sets || 3;
 
-      // Get last completed session's sets for this exercise
       const { data: lastSessionExercise } = await supabase
         .from('session_exercises')
         .select(`
@@ -153,7 +188,6 @@ export default function Workout() {
         }
       }
 
-      // Create initial sets
       const initialSets = Array.from({ length: setsCount }, () => ({
         weight: lastWeight,
         reps: lastReps,
@@ -167,29 +201,119 @@ export default function Workout() {
     }
   };
 
+  const handleUndoWorkout = useCallback(async () => {
+    if (!lastCompletedSessionId || !user) return;
+
+    setIsUndoing(true);
+    try {
+      // Check if undo is still available
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('undo_available_until, status')
+        .eq('id', lastCompletedSessionId)
+        .single();
+
+      if (!session || session.status !== 'completed') {
+        toast.error(locale === 'ru' ? 'Сессия недоступна' : 'Session not available');
+        return;
+      }
+
+      if (!session.undo_available_until || new Date() > new Date(session.undo_available_until)) {
+        toast.error(locale === 'ru' ? 'Время отмены истекло' : 'Undo time expired');
+        setUndoAvailableUntil(null);
+        setLastCompletedSessionId(null);
+        return;
+      }
+
+      // Restore session to draft
+      const { error } = await supabase
+        .from('sessions')
+        .update({
+          status: 'draft',
+          completed_at: null,
+          undo_available_until: null,
+          timer_running: true,
+          timer_last_started_at: new Date().toISOString(),
+        })
+        .eq('id', lastCompletedSessionId);
+
+      if (error) throw error;
+
+      // Restore local draft from server
+      await setActiveSession(lastCompletedSessionId);
+
+      // Dismiss undo toast
+      if (undoToastIdRef.current) {
+        toast.dismiss(undoToastIdRef.current);
+        undoToastIdRef.current = null;
+      }
+
+      setUndoAvailableUntil(null);
+      setLastCompletedSessionId(null);
+
+      toast.success(locale === 'ru' ? 'Тренировка восстановлена' : 'Workout restored');
+    } catch (error) {
+      console.error('Failed to undo workout:', error);
+      toast.error(locale === 'ru' ? 'Ошибка отмены' : 'Failed to undo');
+    } finally {
+      setIsUndoing(false);
+    }
+  }, [lastCompletedSessionId, user, locale, setActiveSession]);
+
   const handleFinishWorkout = async () => {
     if (!sessionId || !user) return;
     
     setIsFinishing(true);
     try {
+      // Stop timer and calculate final elapsed time
+      let finalElapsed = timerData?.elapsed_seconds || 0;
+      if (timerData?.timer_running && timerData?.timer_last_started_at) {
+        const lastStart = new Date(timerData.timer_last_started_at).getTime();
+        finalElapsed += Math.floor((Date.now() - lastStart) / 1000);
+      }
+
       // Calculate progression for all exercises in the session
       await calculateProgressionForSession(sessionId, user.id);
       
-      // Update session status to completed
+      const now = new Date();
+      const undoUntil = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+
+      // Update session status to completed with undo window
       const { error } = await supabase
         .from('sessions')
         .update({ 
           status: 'completed',
-          completed_at: new Date().toISOString()
+          completed_at: now.toISOString(),
+          elapsed_seconds: finalElapsed,
+          timer_running: false,
+          undo_available_until: undoUntil.toISOString(),
         })
         .eq('id', sessionId);
 
       if (error) throw error;
 
+      // Store for undo
+      const completedSessionId = sessionId;
+      setLastCompletedSessionId(completedSessionId);
+      setUndoAvailableUntil(undoUntil);
+
       // Clear local draft
       await clearDraft();
 
-      toast.success(t('workoutFinished'));
+      // Show toast with undo button
+      undoToastIdRef.current = toast.success(
+        locale === 'ru' ? 'Тренировка завершена!' : 'Workout finished!',
+        {
+          duration: 10000,
+          action: {
+            label: locale === 'ru' ? 'Отменить' : 'Undo',
+            onClick: () => {
+              handleUndoWorkout();
+            },
+          },
+        }
+      );
+
       navigate('/');
     } catch (error) {
       console.error('Failed to finish workout:', error);
@@ -247,17 +371,21 @@ export default function Workout() {
         .maybeSingle();
 
       if (existingDraft) {
-        // Delete orphaned draft
         await supabase.from('sessions').delete().eq('id', existingDraft.id);
       }
 
+      const now = new Date().toISOString();
       const { data: newSession, error: sessionError } = await supabase
         .from('sessions')
         .insert({
           user_id: user.id,
-          date: new Date().toISOString(),
+          date: now,
           source: 'repeat',
           status: 'draft',
+          started_at: now,
+          timer_last_started_at: now,
+          elapsed_seconds: 0,
+          timer_running: true,
         })
         .select()
         .single();
@@ -299,7 +427,6 @@ export default function Workout() {
         }
       }
 
-      // Update the workout context with the new session
       await setActiveSession(newSession.id);
     } catch (error) {
       console.error('Failed to repeat workout:', error);
@@ -365,6 +492,37 @@ export default function Workout() {
               {t('repeatLastWorkout')}
             </Button>
           </div>
+
+          {/* Show undo button if available */}
+          {lastCompletedSessionId && undoAvailableUntil && new Date() < undoAvailableUntil && (
+            <Card className="mt-8 p-4 bg-secondary/50 border-border w-full max-w-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {locale === 'ru' ? 'Последняя тренировка завершена' : 'Last workout finished'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {locale === 'ru' ? 'Можно отменить' : 'Can be undone'}
+                  </p>
+                </div>
+                <Button
+                  onClick={handleUndoWorkout}
+                  disabled={isUndoing}
+                  variant="outline"
+                  size="sm"
+                >
+                  {isUndoing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Undo2 className="h-4 w-4 mr-1" />
+                      {locale === 'ru' ? 'Отменить' : 'Undo'}
+                    </>
+                  )}
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       </Layout>
     );

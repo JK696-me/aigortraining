@@ -165,30 +165,45 @@ export type Database = {
           completed_at: string | null
           created_at: string
           date: string
+          elapsed_seconds: number | null
           id: string
           source: string
+          started_at: string | null
           status: string
           template_id: string | null
+          timer_last_started_at: string | null
+          timer_running: boolean | null
+          undo_available_until: string | null
           user_id: string
         }
         Insert: {
           completed_at?: string | null
           created_at?: string
           date: string
+          elapsed_seconds?: number | null
           id?: string
           source: string
+          started_at?: string | null
           status?: string
           template_id?: string | null
+          timer_last_started_at?: string | null
+          timer_running?: boolean | null
+          undo_available_until?: string | null
           user_id: string
         }
         Update: {
           completed_at?: string | null
           created_at?: string
           date?: string
+          elapsed_seconds?: number | null
           id?: string
           source?: string
+          started_at?: string | null
           status?: string
           template_id?: string | null
+          timer_last_started_at?: string | null
+          timer_running?: boolean | null
+          undo_available_until?: string | null
           user_id?: string
         }
         Relationships: [
