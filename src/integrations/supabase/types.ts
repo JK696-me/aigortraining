@@ -379,6 +379,7 @@ export type Database = {
     }
     Functions: {
       reset_training_data: { Args: never; Returns: undefined }
+      undo_complete_session: { Args: { session_id: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
