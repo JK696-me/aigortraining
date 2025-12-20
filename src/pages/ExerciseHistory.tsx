@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2 } from "lucide-react";
+import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2, Undo2, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,7 @@ import {
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useWorkout } from "@/contexts/WorkoutContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
@@ -31,6 +32,7 @@ interface CompletedSession {
   id: string;
   date: string;
   completed_at: string;
+  undo_available_until: string | null;
   exercises: {
     id: string;
     name: string;
@@ -45,6 +47,7 @@ export default function ExerciseHistory() {
   const sessionId = searchParams.get('session');
   const { t, locale } = useLanguage();
   const { user } = useAuth();
+  const { setActiveSession } = useWorkout();
   
   const [sessions, setSessions] = useState<CompletedSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<CompletedSession | null>(null);
@@ -52,6 +55,14 @@ export default function ExerciseHistory() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [, setForceUpdate] = useState(0);
+
+  // Force re-render every second to update undo availability
+  useEffect(() => {
+    const interval = setInterval(() => setForceUpdate(n => n + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Load completed sessions
   useEffect(() => {
@@ -62,7 +73,7 @@ export default function ExerciseHistory() {
       
       const { data: sessionsData, error } = await supabase
         .from('sessions')
-        .select('id, date, completed_at')
+        .select('id, date, completed_at, undo_available_until')
         .eq('user_id', user.id)
         .eq('status', 'completed')
         .order('completed_at', { ascending: false });
@@ -105,6 +116,7 @@ export default function ExerciseHistory() {
           id: session.id,
           date: session.date,
           completed_at: session.completed_at,
+          undo_available_until: session.undo_available_until,
           exercises,
         });
       }
@@ -176,6 +188,57 @@ export default function ExerciseHistory() {
     }
   };
 
+  const canUndo = (session: CompletedSession) => {
+    if (!session.undo_available_until) return false;
+    return new Date() <= new Date(session.undo_available_until);
+  };
+
+  const getUndoTimeRemaining = (session: CompletedSession) => {
+    if (!session.undo_available_until) return 0;
+    const remaining = new Date(session.undo_available_until).getTime() - Date.now();
+    return Math.max(0, Math.ceil(remaining / 1000));
+  };
+
+  const formatUndoTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleUndoWorkout = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    
+    setIsUndoing(true);
+    try {
+      const { data, error } = await supabase.rpc('undo_complete_session', {
+        session_id: sessionId,
+      });
+
+      if (error) {
+        console.error('RPC error:', error);
+        if (error.message.includes('undo_not_available')) {
+          toast.error(locale === 'ru' ? 'Время отмены истекло' : 'Undo time expired');
+        } else if (error.message.includes('session_not_found')) {
+          toast.error(locale === 'ru' ? 'Сессия не найдена' : 'Session not found');
+        } else {
+          toast.error(locale === 'ru' ? 'Ошибка отмены' : 'Failed to undo');
+        }
+        return;
+      }
+
+      // Restore local draft from server
+      await setActiveSession(sessionId);
+
+      toast.success(locale === 'ru' ? 'Тренировка восстановлена' : 'Workout restored');
+      navigate('/workout');
+    } catch (error) {
+      console.error('Failed to undo workout:', error);
+      toast.error(locale === 'ru' ? 'Ошибка отмены' : 'Failed to undo');
+    } finally {
+      setIsUndoing(false);
+    }
+  };
+
   // Session Details View
   if (selectedSession) {
     return (
@@ -211,6 +274,35 @@ export default function ExerciseHistory() {
             <p className="text-muted-foreground">
               {formatSessionDate(selectedSession.completed_at)}
             </p>
+            
+            {/* Undo Banner in Detail View */}
+            {canUndo(selectedSession) && (
+              <Card className="mt-4 p-4 bg-primary/10 border-primary/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {locale === 'ru' ? 'Отменить завершение?' : 'Undo completion?'}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {locale === 'ru' ? 'Осталось' : 'Remaining'}: {formatUndoTime(getUndoTimeRemaining(selectedSession))}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={(e) => handleUndoWorkout(e, selectedSession.id)}
+                    disabled={isUndoing}
+                    className="bg-primary hover:bg-primary/90"
+                  >
+                    {isUndoing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Undo2 className="h-4 w-4 mr-2" />
+                    )}
+                    {locale === 'ru' ? 'Отменить' : 'Undo'}
+                  </Button>
+                </div>
+              </Card>
+            )}
           </div>
 
           {/* Stats */}
@@ -311,10 +403,12 @@ export default function ExerciseHistory() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {sessions.map((session) => (
+            {sessions.map((session, index) => (
               <Card
                 key={session.id}
-                className="p-4 bg-card border-border hover:bg-secondary/50 transition-colors cursor-pointer"
+                className={`p-4 bg-card border-border hover:bg-secondary/50 transition-colors cursor-pointer ${
+                  index === 0 && canUndo(session) ? 'border-primary/50' : ''
+                }`}
                 onClick={() => setSelectedSession(session)}
               >
                 <div className="flex items-center justify-between">
@@ -331,6 +425,26 @@ export default function ExerciseHistory() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    {/* Show Undo button only for the first (most recent) session if undo is available */}
+                    {index === 0 && canUndo(session) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs border-primary/50 text-primary hover:bg-primary/10"
+                        onClick={(e) => handleUndoWorkout(e, session.id)}
+                        disabled={isUndoing}
+                      >
+                        {isUndoing ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Undo2 className="h-3 w-3 mr-1" />
+                        )}
+                        {locale === 'ru' ? 'Отменить' : 'Undo'}
+                        <span className="ml-1 text-muted-foreground">
+                          ({formatUndoTime(getUndoTimeRemaining(session))})
+                        </span>
+                      </Button>
+                    )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -343,7 +457,7 @@ export default function ExerciseHistory() {
                           onClick={(e) => handleDeleteClick(e, session.id)}
                         >
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Удалить тренировку
+                          {locale === 'ru' ? 'Удалить тренировку' : 'Delete workout'}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
