@@ -206,38 +206,24 @@ export default function Workout() {
 
     setIsUndoing(true);
     try {
-      // Check if undo is still available
-      const { data: session } = await supabase
-        .from('sessions')
-        .select('undo_available_until, status')
-        .eq('id', lastCompletedSessionId)
-        .single();
+      // Call RPC to undo - server handles all validation
+      const { data, error } = await supabase.rpc('undo_complete_session', {
+        session_id: lastCompletedSessionId,
+      });
 
-      if (!session || session.status !== 'completed') {
-        toast.error(locale === 'ru' ? 'Сессия недоступна' : 'Session not available');
+      if (error) {
+        console.error('RPC error:', error);
+        if (error.message.includes('undo_not_available')) {
+          toast.error(locale === 'ru' ? 'Время отмены истекло' : 'Undo time expired');
+          setUndoAvailableUntil(null);
+          setLastCompletedSessionId(null);
+        } else if (error.message.includes('session_not_found')) {
+          toast.error(locale === 'ru' ? 'Сессия не найдена' : 'Session not found');
+        } else {
+          toast.error(locale === 'ru' ? 'Ошибка отмены' : 'Failed to undo');
+        }
         return;
       }
-
-      if (!session.undo_available_until || new Date() > new Date(session.undo_available_until)) {
-        toast.error(locale === 'ru' ? 'Время отмены истекло' : 'Undo time expired');
-        setUndoAvailableUntil(null);
-        setLastCompletedSessionId(null);
-        return;
-      }
-
-      // Restore session to draft
-      const { error } = await supabase
-        .from('sessions')
-        .update({
-          status: 'draft',
-          completed_at: null,
-          undo_available_until: null,
-          timer_running: true,
-          timer_last_started_at: new Date().toISOString(),
-        })
-        .eq('id', lastCompletedSessionId);
-
-      if (error) throw error;
 
       // Restore local draft from server
       await setActiveSession(lastCompletedSessionId);
