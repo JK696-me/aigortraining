@@ -126,6 +126,7 @@ export type Database = {
           performed_sets_count: number | null
           rpe: number | null
           session_id: string
+          sort_order: number | null
         }
         Insert: {
           created_at?: string
@@ -134,6 +135,7 @@ export type Database = {
           performed_sets_count?: number | null
           rpe?: number | null
           session_id: string
+          sort_order?: number | null
         }
         Update: {
           created_at?: string
@@ -142,6 +144,7 @@ export type Database = {
           performed_sets_count?: number | null
           rpe?: number | null
           session_id?: string
+          sort_order?: number | null
         }
         Relationships: [
           {

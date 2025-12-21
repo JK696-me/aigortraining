@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
@@ -58,7 +58,7 @@ export default function Workout() {
   
   const sessionId = activeSessionId;
   
-  const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise } = useSessionExercises(sessionId);
+  const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
   const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
@@ -258,6 +258,29 @@ export default function Workout() {
   const handleOpenDeleteDialog = (id: string, name: string) => {
     setExerciseToDelete({ id, name });
     setDeleteDialogOpen(true);
+  };
+
+  const handleMoveExercise = async (exerciseId: string, direction: 'up' | 'down') => {
+    const currentIndex = sessionExercises.findIndex(e => e.id === exerciseId);
+    if (currentIndex === -1) return;
+    
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex < 0 || newIndex >= sessionExercises.length) return;
+    
+    const newItems = [...sessionExercises];
+    [newItems[currentIndex], newItems[newIndex]] = [newItems[newIndex], newItems[currentIndex]];
+    
+    const newOrder = newItems.map((item, index) => ({
+      id: item.id,
+      sort_order: index + 1,
+    }));
+    
+    try {
+      await reorderExercises(newOrder);
+    } catch (error) {
+      console.error('Failed to reorder exercises:', error);
+      toast.error(locale === 'ru' ? 'Ошибка сортировки' : 'Failed to reorder');
+    }
   };
 
   const handleUndoWorkout = useCallback(async () => {
@@ -612,12 +635,31 @@ export default function Workout() {
           </Card>
         ) : (
           <div className="space-y-3 mb-6">
-            {sessionExercises.map((se) => (
+            {sessionExercises.map((se, index) => (
               <Card
                 key={se.id}
                 className="p-4 bg-card border-border"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {/* Reorder buttons */}
+                  <div className="flex flex-col gap-1">
+                    <button
+                      onClick={() => handleMoveExercise(se.id, 'up')}
+                      disabled={index === 0}
+                      className="p-1 rounded hover:bg-secondary disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                    <button
+                      onClick={() => handleMoveExercise(se.id, 'down')}
+                      disabled={index === sessionExercises.length - 1}
+                      className="p-1 rounded hover:bg-secondary disabled:opacity-30 transition-colors"
+                    >
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  </div>
+
+                  {/* Exercise info */}
                   <div 
                     className="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
                     onClick={() => navigate(`/exercise?se=${se.id}`)}
@@ -632,7 +674,9 @@ export default function Workout() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
