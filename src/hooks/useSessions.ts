@@ -185,12 +185,91 @@ export function useSessionExercises(sessionId: string | null) {
     },
   });
 
+  const deleteExercise = useMutation({
+    mutationFn: async (sessionExerciseId: string) => {
+      // Delete sets first (due to FK)
+      await supabase
+        .from('sets')
+        .delete()
+        .eq('session_exercise_id', sessionExerciseId);
+      
+      // Delete session exercise
+      const { error } = await supabase
+        .from('session_exercises')
+        .delete()
+        .eq('id', sessionExerciseId);
+      
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+    },
+  });
+
+  const replaceExercise = useMutation({
+    mutationFn: async ({ 
+      oldSessionExerciseId, 
+      newExerciseId, 
+      initialSets 
+    }: { 
+      oldSessionExerciseId: string; 
+      newExerciseId: string; 
+      initialSets: { weight: number; reps: number }[] 
+    }) => {
+      if (!sessionId || !user) throw new Error('Not authenticated');
+
+      // Delete old session exercise and its sets
+      await supabase
+        .from('sets')
+        .delete()
+        .eq('session_exercise_id', oldSessionExerciseId);
+      
+      await supabase
+        .from('session_exercises')
+        .delete()
+        .eq('id', oldSessionExerciseId);
+
+      // Create new session exercise
+      const { data: sessionExercise, error: seError } = await supabase
+        .from('session_exercises')
+        .insert({ 
+          session_id: sessionId, 
+          exercise_id: newExerciseId 
+        })
+        .select()
+        .single();
+      
+      if (seError) throw seError;
+
+      // Create initial sets for new exercise
+      if (initialSets.length > 0) {
+        const setsToInsert = initialSets.map((set, index) => ({
+          session_exercise_id: sessionExercise.id,
+          set_index: index + 1,
+          weight: set.weight,
+          reps: set.reps,
+        }));
+
+        await supabase.from('sets').insert(setsToInsert);
+      }
+
+      return sessionExercise;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+    },
+  });
+
   return {
     exercises,
     isLoading,
     addExercise: addExercise.mutateAsync,
     updateRpe: updateRpe.mutate,
+    deleteExercise: deleteExercise.mutateAsync,
+    replaceExercise: replaceExercise.mutateAsync,
     isAdding: addExercise.isPending,
+    isDeleting: deleteExercise.isPending,
+    isReplacing: replaceExercise.isPending,
   };
 }
 
