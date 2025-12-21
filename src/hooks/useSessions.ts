@@ -17,6 +17,7 @@ export interface SessionExercise {
   exercise_id: string;
   rpe: number | null;
   performed_sets_count: number | null;
+  sort_order: number | null;
   created_at: string;
   exercise?: {
     id: string;
@@ -124,7 +125,8 @@ export function useSessionExercises(sessionId: string | null) {
           exercise:exercises(id, name, type, increment_kind, increment_value)
         `)
         .eq('session_id', sessionId)
-        .order('created_at');
+        .order('sort_order', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true });
       
       if (error) throw error;
       return data as SessionExercise[];
@@ -136,12 +138,18 @@ export function useSessionExercises(sessionId: string | null) {
     mutationFn: async ({ exerciseId, initialSets }: { exerciseId: string; initialSets: { weight: number; reps: number }[] }) => {
       if (!sessionId || !user) throw new Error('Not authenticated');
       
+      // Get max sort_order for this session
+      const maxOrder = exercises.length > 0 
+        ? Math.max(...exercises.map(e => e.sort_order ?? 0)) 
+        : 0;
+      
       // Create session_exercise
       const { data: sessionExercise, error: seError } = await supabase
         .from('session_exercises')
         .insert({ 
           session_id: sessionId, 
-          exercise_id: exerciseId 
+          exercise_id: exerciseId,
+          sort_order: maxOrder + 1,
         })
         .select()
         .single();
@@ -260,6 +268,20 @@ export function useSessionExercises(sessionId: string | null) {
     },
   });
 
+  const reorderExercises = useMutation({
+    mutationFn: async (newOrder: { id: string; sort_order: number }[]) => {
+      for (const item of newOrder) {
+        await supabase
+          .from('session_exercises')
+          .update({ sort_order: item.sort_order })
+          .eq('id', item.id);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+    },
+  });
+
   return {
     exercises,
     isLoading,
@@ -267,9 +289,11 @@ export function useSessionExercises(sessionId: string | null) {
     updateRpe: updateRpe.mutate,
     deleteExercise: deleteExercise.mutateAsync,
     replaceExercise: replaceExercise.mutateAsync,
+    reorderExercises: reorderExercises.mutateAsync,
     isAdding: addExercise.isPending,
     isDeleting: deleteExercise.isPending,
     isReplacing: replaceExercise.isPending,
+    isReordering: reorderExercises.isPending,
   };
 }
 
