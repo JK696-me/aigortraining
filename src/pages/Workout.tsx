@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2 } from "lucide-react";
+import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
@@ -14,6 +14,22 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
 import { useWorkout } from "@/contexts/WorkoutContext";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SessionTimerData {
   elapsed_seconds: number;
@@ -42,8 +58,12 @@ export default function Workout() {
   
   const sessionId = activeSessionId;
   
-  const { exercises: sessionExercises, isLoading, addExercise } = useSessionExercises(sessionId);
+  const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise } = useSessionExercises(sessionId);
   const [showPicker, setShowPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
+  const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [exerciseToDelete, setExerciseToDelete] = useState<{ id: string; name: string } | null>(null);
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -193,12 +213,51 @@ export default function Workout() {
         reps: lastReps,
       }));
 
-      await addExercise({ exerciseId: exercise.id, initialSets });
+      if (pickerMode === 'replace' && replacingExerciseId) {
+        await replaceExercise({
+          oldSessionExerciseId: replacingExerciseId,
+          newExerciseId: exercise.id,
+          initialSets,
+        });
+        toast.success(locale === 'ru' ? 'Упражнение заменено' : 'Exercise replaced');
+        setReplacingExerciseId(null);
+      } else {
+        await addExercise({ exerciseId: exercise.id, initialSets });
+        toast.success(locale === 'ru' ? 'Упражнение добавлено' : 'Exercise added');
+      }
+      
       setShowPicker(false);
+      setPickerMode('add');
     } catch (error) {
-      console.error('Failed to add exercise:', error);
-      toast.error('Failed to add exercise');
+      console.error('Failed to handle exercise:', error);
+      toast.error(locale === 'ru' ? 'Ошибка' : 'Error');
     }
+  };
+
+  const handleOpenReplacePicker = (sessionExerciseId: string) => {
+    setReplacingExerciseId(sessionExerciseId);
+    setPickerMode('replace');
+    setShowPicker(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!exerciseToDelete) return;
+    
+    try {
+      await deleteExercise(exerciseToDelete.id);
+      toast.success(locale === 'ru' ? 'Упражнение удалено' : 'Exercise removed');
+    } catch (error) {
+      console.error('Failed to delete exercise:', error);
+      toast.error(locale === 'ru' ? 'Ошибка удаления' : 'Failed to delete');
+    } finally {
+      setDeleteDialogOpen(false);
+      setExerciseToDelete(null);
+    }
+  };
+
+  const handleOpenDeleteDialog = (id: string, name: string) => {
+    setExerciseToDelete({ id, name });
+    setDeleteDialogOpen(true);
   };
 
   const handleUndoWorkout = useCallback(async () => {
@@ -556,11 +615,13 @@ export default function Workout() {
             {sessionExercises.map((se) => (
               <Card
                 key={se.id}
-                className="p-4 bg-card border-border hover:bg-secondary/50 transition-colors cursor-pointer active:scale-[0.98]"
-                onClick={() => navigate(`/exercise?se=${se.id}`)}
+                className="p-4 bg-card border-border"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  <div 
+                    className="flex items-center gap-3 flex-1 cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => navigate(`/exercise?se=${se.id}`)}
+                  >
                     <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center text-muted-foreground">
                       <Dumbbell className="h-5 w-5" />
                     </div>
@@ -571,7 +632,44 @@ export default function Workout() {
                       </p>
                     </div>
                   </div>
-                  <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  <div className="flex items-center gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className="p-2 rounded-full hover:bg-secondary transition-colors"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <MoreVertical className="h-5 w-5 text-muted-foreground" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="bg-popover border-border z-50">
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenReplacePicker(se.id);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <RefreshCw className="h-4 w-4 mr-2" />
+                          {locale === 'ru' ? 'Заменить' : 'Replace'}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDeleteDialog(se.id, se.exercise?.name || '');
+                          }}
+                          className="cursor-pointer text-destructive focus:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          {locale === 'ru' ? 'Удалить' : 'Delete'}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <ChevronRight 
+                      className="h-5 w-5 text-muted-foreground cursor-pointer" 
+                      onClick={() => navigate(`/exercise?se=${se.id}`)}
+                    />
+                  </div>
                 </div>
               </Card>
             ))}
@@ -581,7 +679,11 @@ export default function Workout() {
         {/* Actions */}
         <div className="space-y-3">
           <Button
-            onClick={() => setShowPicker(true)}
+            onClick={() => {
+              setPickerMode('add');
+              setReplacingExerciseId(null);
+              setShowPicker(true);
+            }}
             variant="secondary"
             className="w-full h-14 text-base font-medium"
             size="lg"
@@ -615,9 +717,38 @@ export default function Workout() {
       {showPicker && (
         <ExercisePicker
           onSelect={handleSelectExercise}
-          onClose={() => setShowPicker(false)}
+          onClose={() => {
+            setShowPicker(false);
+            setPickerMode('add');
+            setReplacingExerciseId(null);
+          }}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {locale === 'ru' ? 'Удалить упражнение?' : 'Delete exercise?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {locale === 'ru' 
+                ? `Упражнение "${exerciseToDelete?.name}" и все его подходы будут удалены из этой тренировки.`
+                : `"${exerciseToDelete?.name}" and all its sets will be removed from this workout.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{locale === 'ru' ? 'Отмена' : 'Cancel'}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {locale === 'ru' ? 'Удалить' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }
