@@ -159,6 +159,13 @@ export default function TemplateEditor() {
         await supabase.from('sessions').delete().eq('id', existingDraft.id);
       }
 
+      // Create template snapshot for later comparison
+      const templateSnapshot = items.map(item => ({
+        exercise_id: item.exercise_id,
+        target_sets: item.target_sets,
+        sort_order: item.sort_order,
+      }));
+
       // Create session from template
       const now = new Date().toISOString();
       const { data: session, error: sessionError } = await supabase
@@ -168,6 +175,7 @@ export default function TemplateEditor() {
           date: now,
           source: 'template',
           template_id: templateId,
+          template_snapshot: templateSnapshot,
           status: 'draft',
           started_at: now,
           timer_last_started_at: now,
