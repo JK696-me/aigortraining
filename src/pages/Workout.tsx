@@ -10,6 +10,7 @@ import { useSessionExercises } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
+import { TemplateSaveModal } from "@/components/TemplateSaveModal";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
@@ -31,10 +32,22 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+interface TemplateSnapshotItem {
+  exercise_id: string;
+  target_sets: number;
+  sort_order: number;
+}
+
 interface SessionTimerData {
   elapsed_seconds: number;
   timer_running: boolean;
   timer_last_started_at: string | null;
+}
+
+interface SessionMetadata {
+  source: string;
+  template_id: string | null;
+  template_snapshot: TemplateSnapshotItem[] | null;
 }
 
 export default function Workout() {
@@ -73,6 +86,17 @@ export default function Workout() {
   const [undoAvailableUntil, setUndoAvailableUntil] = useState<Date | null>(null);
   const [isUndoing, setIsUndoing] = useState(false);
   const undoToastIdRef = useRef<string | number | null>(null);
+  
+  // Template save modal state
+  const [showTemplateSaveModal, setShowTemplateSaveModal] = useState(false);
+  const [pendingFinishData, setPendingFinishData] = useState<{
+    sessionId: string;
+    templateId: string;
+    templateName: string;
+    finalElapsed: number;
+  } | null>(null);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [sessionMetadata, setSessionMetadata] = useState<SessionMetadata | null>(null);
 
   // Refresh active session on mount and visibility change
   useEffect(() => {
@@ -96,18 +120,19 @@ export default function Workout() {
     };
   }, [refreshActiveSession]);
 
-  // Fetch session timer data
+  // Fetch session timer data and metadata
   useEffect(() => {
     if (!sessionId) {
       setTimerData(null);
       setWorkoutTime(0);
+      setSessionMetadata(null);
       return;
     }
 
-    const fetchTimerData = async () => {
+    const fetchSessionData = async () => {
       const { data } = await supabase
         .from('sessions')
-        .select('elapsed_seconds, timer_running, timer_last_started_at')
+        .select('elapsed_seconds, timer_running, timer_last_started_at, source, template_id, template_snapshot')
         .eq('id', sessionId)
         .single();
       
@@ -117,10 +142,15 @@ export default function Workout() {
           timer_running: data.timer_running ?? true,
           timer_last_started_at: data.timer_last_started_at,
         });
+        setSessionMetadata({
+          source: data.source,
+          template_id: data.template_id,
+          template_snapshot: data.template_snapshot as unknown as TemplateSnapshotItem[] | null,
+        });
       }
     };
 
-    fetchTimerData();
+    fetchSessionData();
   }, [sessionId]);
 
   // Server-based timer calculation
@@ -328,18 +358,34 @@ export default function Workout() {
     }
   }, [lastCompletedSessionId, user, locale, setActiveSession]);
 
-  const handleFinishWorkout = async () => {
+  // Check if workout differs from template snapshot
+  const checkWorkoutDifference = useCallback(() => {
+    if (!sessionMetadata?.template_snapshot || !sessionMetadata?.template_id) {
+      return false;
+    }
+
+    const snapshot = sessionMetadata.template_snapshot;
+    const current = sessionExercises.map((se, index) => ({
+      exercise_id: se.exercise_id,
+      sort_order: index + 1,
+    }));
+
+    // Check if exercise count differs
+    if (snapshot.length !== current.length) return true;
+
+    // Check if exercise order or composition differs
+    for (let i = 0; i < snapshot.length; i++) {
+      if (snapshot[i].exercise_id !== current[i].exercise_id) return true;
+    }
+
+    return false;
+  }, [sessionMetadata, sessionExercises]);
+
+  // Complete the workout (called after modal decision or directly)
+  const completeWorkout = useCallback(async (finalElapsed: number) => {
     if (!sessionId || !user) return;
     
-    setIsFinishing(true);
     try {
-      // Stop timer and calculate final elapsed time
-      let finalElapsed = timerData?.elapsed_seconds || 0;
-      if (timerData?.timer_running && timerData?.timer_last_started_at) {
-        const lastStart = new Date(timerData.timer_last_started_at).getTime();
-        finalElapsed += Math.floor((Date.now() - lastStart) / 1000);
-      }
-
       // Calculate progression for all exercises in the session
       await calculateProgressionForSession(sessionId, user.id);
       
@@ -384,11 +430,157 @@ export default function Workout() {
 
       navigate('/');
     } catch (error) {
+      console.error('Failed to complete workout:', error);
+      toast.error('Failed to finish workout');
+    }
+  }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate]);
+
+  const handleFinishWorkout = async () => {
+    if (!sessionId || !user) return;
+    
+    setIsFinishing(true);
+    try {
+      // Stop timer and calculate final elapsed time
+      let finalElapsed = timerData?.elapsed_seconds || 0;
+      if (timerData?.timer_running && timerData?.timer_last_started_at) {
+        const lastStart = new Date(timerData.timer_last_started_at).getTime();
+        finalElapsed += Math.floor((Date.now() - lastStart) / 1000);
+      }
+
+      // Check if this is a template-based workout with changes
+      if (sessionMetadata?.source === 'template' && sessionMetadata?.template_id && checkWorkoutDifference()) {
+        // Fetch template name
+        const { data: template } = await supabase
+          .from('workout_templates')
+          .select('name')
+          .eq('id', sessionMetadata.template_id)
+          .single();
+
+        if (template) {
+          // Show modal instead of completing
+          setPendingFinishData({
+            sessionId,
+            templateId: sessionMetadata.template_id,
+            templateName: template.name,
+            finalElapsed,
+          });
+          setShowTemplateSaveModal(true);
+          setIsFinishing(false);
+          return;
+        }
+      }
+
+      // Complete workout directly
+      await completeWorkout(finalElapsed);
+    } catch (error) {
       console.error('Failed to finish workout:', error);
       toast.error('Failed to finish workout');
     } finally {
       setIsFinishing(false);
     }
+  };
+
+  // Template save handlers
+  const handleCreateNewTemplate = async (name: string) => {
+    if (!pendingFinishData || !user) return;
+    
+    setIsSavingTemplate(true);
+    try {
+      // Create new template
+      const { data: newTemplate, error: templateError } = await supabase
+        .from('workout_templates')
+        .insert({
+          user_id: user.id,
+          name,
+        })
+        .select()
+        .single();
+
+      if (templateError) throw templateError;
+
+      // Get set counts for each session exercise
+      const templateItems = await Promise.all(
+        sessionExercises.map(async (se, index) => {
+          const { count } = await supabase
+            .from('sets')
+            .select('*', { count: 'exact', head: true })
+            .eq('session_exercise_id', se.id);
+          
+          return {
+            template_id: newTemplate.id,
+            exercise_id: se.exercise_id,
+            target_sets: count || 3,
+            sort_order: index + 1,
+          };
+        })
+      );
+
+      await supabase.from('template_items').insert(templateItems);
+
+      toast.success(locale === 'ru' ? 'Новый шаблон создан' : 'New template created');
+      
+      // Complete the workout
+      await completeWorkout(pendingFinishData.finalElapsed);
+    } catch (error) {
+      console.error('Failed to create template:', error);
+      toast.error(locale === 'ru' ? 'Ошибка создания шаблона' : 'Failed to create template');
+    } finally {
+      setIsSavingTemplate(false);
+      setShowTemplateSaveModal(false);
+      setPendingFinishData(null);
+    }
+  };
+
+  const handleUpdateExistingTemplate = async () => {
+    if (!pendingFinishData) return;
+    
+    setIsSavingTemplate(true);
+    try {
+      // Delete old template items
+      await supabase
+        .from('template_items')
+        .delete()
+        .eq('template_id', pendingFinishData.templateId);
+
+      // Get set counts for each session exercise
+      const templateItems = await Promise.all(
+        sessionExercises.map(async (se, index) => {
+          const { count } = await supabase
+            .from('sets')
+            .select('*', { count: 'exact', head: true })
+            .eq('session_exercise_id', se.id);
+          
+          return {
+            template_id: pendingFinishData.templateId,
+            exercise_id: se.exercise_id,
+            target_sets: count || 3,
+            sort_order: index + 1,
+          };
+        })
+      );
+
+      await supabase.from('template_items').insert(templateItems);
+
+      toast.success(locale === 'ru' ? 'Шаблон обновлён' : 'Template updated');
+      
+      // Complete the workout
+      await completeWorkout(pendingFinishData.finalElapsed);
+    } catch (error) {
+      console.error('Failed to update template:', error);
+      toast.error(locale === 'ru' ? 'Ошибка обновления шаблона' : 'Failed to update template');
+    } finally {
+      setIsSavingTemplate(false);
+      setShowTemplateSaveModal(false);
+      setPendingFinishData(null);
+    }
+  };
+
+  const handleSkipTemplateSave = async () => {
+    if (!pendingFinishData) return;
+    
+    setShowTemplateSaveModal(false);
+    await completeWorkout(pendingFinishData.finalElapsed);
+    setPendingFinishData(null);
   };
 
   const handleStartWorkout = async () => {
@@ -793,6 +985,20 @@ export default function Workout() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Template Save Modal */}
+      <TemplateSaveModal
+        open={showTemplateSaveModal}
+        onClose={() => {
+          setShowTemplateSaveModal(false);
+          setPendingFinishData(null);
+        }}
+        onCreateNew={handleCreateNewTemplate}
+        onUpdateExisting={handleUpdateExistingTemplate}
+        onSkip={handleSkipTemplateSave}
+        templateName={pendingFinishData?.templateName || ''}
+        isLoading={isSavingTemplate}
+      />
     </Layout>
   );
 }

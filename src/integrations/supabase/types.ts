@@ -174,6 +174,7 @@ export type Database = {
           started_at: string | null
           status: string
           template_id: string | null
+          template_snapshot: Json | null
           timer_last_started_at: string | null
           timer_running: boolean | null
           undo_available_until: string | null
@@ -189,6 +190,7 @@ export type Database = {
           started_at?: string | null
           status?: string
           template_id?: string | null
+          template_snapshot?: Json | null
           timer_last_started_at?: string | null
           timer_running?: boolean | null
           undo_available_until?: string | null
@@ -204,6 +206,7 @@ export type Database = {
           started_at?: string | null
           status?: string
           template_id?: string | null
+          template_snapshot?: Json | null
           timer_last_started_at?: string | null
           timer_running?: boolean | null
           undo_available_until?: string | null
