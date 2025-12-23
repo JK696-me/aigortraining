@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys, CACHE_TTL } from '@/lib/queryKeys';
 
 export interface UserSettings {
   user_id: string;
@@ -14,8 +15,8 @@ export function useUserSettings() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: settings, isLoading } = useQuery({
-    queryKey: ['user-settings', user?.id],
+  const { data: settings, isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.userSettings(user?.id || ''),
     queryFn: async () => {
       if (!user) return null;
       
@@ -42,6 +43,8 @@ export function useUserSettings() {
       return data as UserSettings;
     },
     enabled: !!user,
+    staleTime: CACHE_TTL.LONG,
+    gcTime: CACHE_TTL.LONG * 2,
   });
 
   const updateSettings = useMutation({
@@ -59,13 +62,14 @@ export function useUserSettings() {
       return data as UserSettings;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-settings', user?.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.userSettings(user?.id || '') });
     },
   });
 
   return {
     settings,
     isLoading,
+    isFetching,
     updateSettings: updateSettings.mutate,
     isUpdating: updateSettings.isPending,
   };

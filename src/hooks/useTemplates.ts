@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys, CACHE_TTL } from '@/lib/queryKeys';
 
 export interface Template {
   id: string;
@@ -26,8 +27,8 @@ export function useTemplates() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: templates = [], isLoading } = useQuery({
-    queryKey: ['templates', user?.id],
+  const { data: templates = [], isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.templates.list(user?.id || ''),
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
@@ -40,6 +41,8 @@ export function useTemplates() {
       return data as Template[];
     },
     enabled: !!user,
+    staleTime: CACHE_TTL.LONG,
+    gcTime: CACHE_TTL.LONG * 2,
   });
 
   const createTemplate = useMutation({
@@ -55,7 +58,7 @@ export function useTemplates() {
       return data as Template;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.all(user?.id || '') });
     },
   });
 
@@ -69,7 +72,7 @@ export function useTemplates() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.all(user?.id || '') });
     },
   });
 
@@ -90,13 +93,14 @@ export function useTemplates() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.all(user?.id || '') });
     },
   });
 
   return {
     templates,
     isLoading,
+    isFetching,
     createTemplate,
     updateTemplate,
     deleteTemplate,
@@ -107,7 +111,7 @@ export function useTemplates() {
 
 export function useTemplate(templateId: string | null) {
   return useQuery({
-    queryKey: ['template', templateId],
+    queryKey: queryKeys.templates.detail(templateId || ''),
     queryFn: async () => {
       if (!templateId) return null;
       const { data, error } = await supabase
@@ -120,14 +124,17 @@ export function useTemplate(templateId: string | null) {
       return data as Template;
     },
     enabled: !!templateId,
+    staleTime: CACHE_TTL.LONG,
+    gcTime: CACHE_TTL.LONG * 2,
   });
 }
 
 export function useTemplateItems(templateId: string | null) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
-  const { data: items = [], isLoading } = useQuery({
-    queryKey: ['template-items', templateId],
+  const { data: items = [], isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.templates.items(templateId || ''),
     queryFn: async () => {
       if (!templateId) return [];
       const { data, error } = await supabase
@@ -143,6 +150,8 @@ export function useTemplateItems(templateId: string | null) {
       return data as TemplateItem[];
     },
     enabled: !!templateId,
+    staleTime: CACHE_TTL.LONG,
+    gcTime: CACHE_TTL.LONG * 2,
   });
 
   const addItem = useMutation({
@@ -170,7 +179,7 @@ export function useTemplateItems(templateId: string | null) {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['template-items', templateId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.items(templateId || '') });
     },
   });
 
@@ -184,7 +193,7 @@ export function useTemplateItems(templateId: string | null) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['template-items', templateId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.items(templateId || '') });
     },
   });
 
@@ -209,7 +218,7 @@ export function useTemplateItems(templateId: string | null) {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['template-items', templateId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.items(templateId || '') });
     },
   });
 
@@ -223,13 +232,14 @@ export function useTemplateItems(templateId: string | null) {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['template-items', templateId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.templates.items(templateId || '') });
     },
   });
 
   return {
     items,
     isLoading,
+    isFetching,
     addItem,
     updateItem,
     deleteItem,

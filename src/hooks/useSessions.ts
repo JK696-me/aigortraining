@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys, CACHE_TTL } from '@/lib/queryKeys';
 
 export interface Session {
   id: string;
@@ -41,8 +42,8 @@ export function useSessions() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: sessions = [], isLoading } = useQuery({
-    queryKey: ['sessions', user?.id],
+  const { data: sessions = [], isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.sessions.completedList(user?.id || ''),
     queryFn: async () => {
       if (!user) return [];
       
@@ -50,12 +51,15 @@ export function useSessions() {
         .from('sessions')
         .select('*')
         .eq('user_id', user.id)
+        .eq('status', 'completed')
         .order('date', { ascending: false });
       
       if (error) throw error;
       return data as Session[];
     },
     enabled: !!user,
+    staleTime: CACHE_TTL.SHORT,
+    gcTime: CACHE_TTL.SHORT * 2,
   });
 
   const createSession = useMutation({
@@ -76,13 +80,14 @@ export function useSessions() {
       return data as Session;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions', user?.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all(user?.id || '') });
     },
   });
 
   return {
     sessions,
     isLoading,
+    isFetching,
     createSession: createSession.mutateAsync,
     isCreating: createSession.isPending,
   };
@@ -92,7 +97,7 @@ export function useSession(sessionId: string | null) {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ['session', sessionId],
+    queryKey: queryKeys.sessions.detail(sessionId || ''),
     queryFn: async () => {
       if (!sessionId || !user) return null;
       
@@ -106,6 +111,8 @@ export function useSession(sessionId: string | null) {
       return data as Session;
     },
     enabled: !!sessionId && !!user,
+    staleTime: CACHE_TTL.IMMEDIATE,
+    gcTime: CACHE_TTL.MEDIUM,
   });
 }
 
@@ -113,8 +120,8 @@ export function useSessionExercises(sessionId: string | null) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: exercises = [], isLoading } = useQuery({
-    queryKey: ['session-exercises', sessionId],
+  const { data: exercises = [], isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.sessions.exercises(sessionId || ''),
     queryFn: async () => {
       if (!sessionId || !user) return [];
       
@@ -132,6 +139,8 @@ export function useSessionExercises(sessionId: string | null) {
       return data as SessionExercise[];
     },
     enabled: !!sessionId && !!user,
+    staleTime: CACHE_TTL.IMMEDIATE,
+    gcTime: CACHE_TTL.MEDIUM,
   });
 
   const addExercise = useMutation({
@@ -175,7 +184,7 @@ export function useSessionExercises(sessionId: string | null) {
       return sessionExercise;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
     },
   });
 
@@ -189,7 +198,7 @@ export function useSessionExercises(sessionId: string | null) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
     },
   });
 
@@ -210,7 +219,7 @@ export function useSessionExercises(sessionId: string | null) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
     },
   });
 
@@ -264,7 +273,7 @@ export function useSessionExercises(sessionId: string | null) {
       return sessionExercise;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
     },
   });
 
@@ -278,13 +287,14 @@ export function useSessionExercises(sessionId: string | null) {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['session-exercises', sessionId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
     },
   });
 
   return {
     exercises,
     isLoading,
+    isFetching,
     addExercise: addExercise.mutateAsync,
     updateRpe: updateRpe.mutate,
     deleteExercise: deleteExercise.mutateAsync,
@@ -300,8 +310,8 @@ export function useSessionExercises(sessionId: string | null) {
 export function useSets(sessionExerciseId: string | null) {
   const queryClient = useQueryClient();
 
-  const { data: sets = [], isLoading, refetch } = useQuery({
-    queryKey: ['sets', sessionExerciseId],
+  const { data: sets = [], isLoading, isFetching, refetch } = useQuery({
+    queryKey: queryKeys.sets.bySessionExercise(sessionExerciseId || ''),
     queryFn: async () => {
       if (!sessionExerciseId) return [];
       
@@ -315,6 +325,8 @@ export function useSets(sessionExerciseId: string | null) {
       return data as Set[];
     },
     enabled: !!sessionExerciseId,
+    staleTime: CACHE_TTL.IMMEDIATE,
+    gcTime: CACHE_TTL.MEDIUM,
   });
 
   const updateSet = useMutation({
@@ -327,7 +339,7 @@ export function useSets(sessionExerciseId: string | null) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sets.bySessionExercise(sessionExerciseId || '') });
     },
   });
 
@@ -352,7 +364,7 @@ export function useSets(sessionExerciseId: string | null) {
       return data as Set;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sets.bySessionExercise(sessionExerciseId || '') });
     },
   });
 
@@ -366,13 +378,14 @@ export function useSets(sessionExerciseId: string | null) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sets', sessionExerciseId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sets.bySessionExercise(sessionExerciseId || '') });
     },
   });
 
   return {
     sets,
     isLoading,
+    isFetching,
     updateSet: updateSet.mutate,
     addSet: addSet.mutate,
     deleteSet: deleteSet.mutate,
@@ -388,7 +401,7 @@ export function useLastExerciseSets(exerciseId: string | null) {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ['last-exercise-sets', exerciseId, user?.id],
+    queryKey: queryKeys.sets.lastExercise(user?.id || '', exerciseId || ''),
     queryFn: async () => {
       if (!exerciseId || !user) return null;
       
@@ -418,6 +431,8 @@ export function useLastExerciseSets(exerciseId: string | null) {
       return sets as Set[];
     },
     enabled: !!exerciseId && !!user,
+    staleTime: CACHE_TTL.MEDIUM,
+    gcTime: CACHE_TTL.MEDIUM * 2,
   });
 }
 
@@ -426,7 +441,7 @@ export function useExerciseState(exerciseId: string | null) {
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ['exercise-state', exerciseId, user?.id],
+    queryKey: queryKeys.exercises.state(exerciseId || ''),
     queryFn: async () => {
       if (!exerciseId || !user) return null;
       
@@ -441,5 +456,7 @@ export function useExerciseState(exerciseId: string | null) {
       return data;
     },
     enabled: !!exerciseId && !!user,
+    staleTime: CACHE_TTL.MEDIUM,
+    gcTime: CACHE_TTL.MEDIUM * 2,
   });
 }
