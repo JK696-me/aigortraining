@@ -7,16 +7,27 @@ interface SyncIndicatorProps {
   syncState: SyncState | null;
   isOnline: boolean;
   isSyncing: boolean;
+  isFetching?: boolean; // New prop for background refresh indicator
   onSync?: () => void;
   className?: string;
 }
 
-export function SyncIndicator({ syncState, isOnline, isSyncing, onSync, className }: SyncIndicatorProps) {
+export function SyncIndicator({ syncState, isOnline, isSyncing, isFetching, onSync, className }: SyncIndicatorProps) {
   const { locale } = useLanguage();
 
-  if (!syncState) return null;
+  // Show fetching indicator even without syncState
+  if (!syncState && !isFetching) return null;
 
   const getContent = () => {
+    // Background refresh takes priority for visual feedback
+    if (isFetching && !isSyncing) {
+      return {
+        icon: <RefreshCw className="h-3.5 w-3.5 animate-spin opacity-50" />,
+        text: locale === 'ru' ? 'Обновляем...' : 'Updating...',
+        className: 'text-muted-foreground',
+      };
+    }
+
     if (isSyncing) {
       return {
         icon: <RefreshCw className="h-3.5 w-3.5 animate-spin" />,

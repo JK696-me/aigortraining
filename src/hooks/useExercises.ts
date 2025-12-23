@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { queryKeys, CACHE_TTL } from '@/lib/queryKeys';
 
 export interface Exercise {
   id: string;
@@ -20,8 +21,8 @@ export function useExercises(searchQuery?: string) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: exercises = [], isLoading } = useQuery({
-    queryKey: ['exercises', user?.id, searchQuery],
+  const { data: exercises = [], isLoading, isFetching } = useQuery({
+    queryKey: queryKeys.exercises.list(user?.id || '', searchQuery),
     queryFn: async () => {
       if (!user) return [];
       
@@ -41,6 +42,8 @@ export function useExercises(searchQuery?: string) {
       return data as Exercise[];
     },
     enabled: !!user,
+    staleTime: CACHE_TTL.LONG,
+    gcTime: CACHE_TTL.LONG * 2,
   });
 
   const createExercise = useMutation({
@@ -57,7 +60,8 @@ export function useExercises(searchQuery?: string) {
       return data as Exercise;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+      // Invalidate all exercise queries for this user
+      queryClient.invalidateQueries({ queryKey: queryKeys.exercises.all(user?.id || '') });
     },
   });
 
@@ -77,7 +81,7 @@ export function useExercises(searchQuery?: string) {
       return data as Exercise;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.exercises.all(user?.id || '') });
     },
   });
 
@@ -94,13 +98,14 @@ export function useExercises(searchQuery?: string) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.exercises.all(user?.id || '') });
     },
   });
 
   return {
     exercises,
     isLoading,
+    isFetching, // Useful for showing background refresh indicator
     createExercise: createExercise.mutate,
     updateExercise: updateExercise.mutate,
     deleteExercise: deleteExercise.mutate,
