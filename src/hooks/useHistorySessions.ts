@@ -165,7 +165,7 @@ export function useSessionDetails(sessionId: string | null) {
   const { user } = useAuth()
 
   return useQuery({
-    queryKey: ['session-details', sessionId],
+    queryKey: queryKeys.sessions.details(sessionId || ''),
     queryFn: async (): Promise<SessionDetail | null> => {
       if (!sessionId || !user) return null
 

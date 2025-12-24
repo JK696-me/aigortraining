@@ -39,6 +39,7 @@ export const queryKeys = {
     all: (userId: string) => ['sessions', userId] as const,
     completedList: (userId: string) => ['sessions', userId, 'completed'] as const,
     detail: (sessionId: string) => ['session', sessionId] as const,
+    details: (sessionId: string) => ['session-details', sessionId] as const,
     full: (sessionId: string) => ['session-full', sessionId] as const,
     exercises: (sessionId: string) => ['session-exercises', sessionId] as const,
   },
@@ -74,6 +75,9 @@ export function getStaleTime(queryKey: readonly unknown[]): number {
     case 'session-full':
     case 'session-exercises':
       return CACHE_TTL.IMMEDIATE
+    case 'session-details':
+      // Session details (completed) are cached longer
+      return CACHE_TTL.LONG
     case 'sets':
     case 'last-exercise-sets':
       return CACHE_TTL.MEDIUM
