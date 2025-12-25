@@ -235,6 +235,17 @@ export function useSessionExercises(sessionId: string | null) {
     }) => {
       if (!sessionId || !user) throw new Error('Not authenticated');
 
+      // Get the old exercise's sort_order before deleting
+      const { data: oldExercise, error: fetchError } = await supabase
+        .from('session_exercises')
+        .select('sort_order')
+        .eq('id', oldSessionExerciseId)
+        .single();
+      
+      if (fetchError) throw fetchError;
+      
+      const oldSortOrder = oldExercise?.sort_order;
+
       // Delete old session exercise and its sets
       await supabase
         .from('sets')
@@ -246,12 +257,13 @@ export function useSessionExercises(sessionId: string | null) {
         .delete()
         .eq('id', oldSessionExerciseId);
 
-      // Create new session exercise
+      // Create new session exercise with the same sort_order
       const { data: sessionExercise, error: seError } = await supabase
         .from('session_exercises')
         .insert({ 
           session_id: sessionId, 
-          exercise_id: newExerciseId 
+          exercise_id: newExerciseId,
+          sort_order: oldSortOrder
         })
         .select()
         .single();
