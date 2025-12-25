@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSessionExercises } from "@/hooks/useSessions";
+import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
+import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
 import { TemplateSaveModal } from "@/components/TemplateSaveModal";
@@ -290,27 +291,8 @@ export default function Workout() {
     setDeleteDialogOpen(true);
   };
 
-  const handleMoveExercise = async (exerciseId: string, direction: 'up' | 'down') => {
-    const currentIndex = sessionExercises.findIndex(e => e.id === exerciseId);
-    if (currentIndex === -1) return;
-    
-    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (newIndex < 0 || newIndex >= sessionExercises.length) return;
-    
-    const newItems = [...sessionExercises];
-    [newItems[currentIndex], newItems[newIndex]] = [newItems[newIndex], newItems[currentIndex]];
-    
-    const newOrder = newItems.map((item, index) => ({
-      id: item.id,
-      sort_order: index + 1,
-    }));
-    
-    try {
-      await reorderExercises(newOrder);
-    } catch (error) {
-      console.error('Failed to reorder exercises:', error);
-      toast.error(locale === 'ru' ? 'Ошибка сортировки' : 'Failed to reorder');
-    }
+  const handleReorderExercises = async (newOrder: { id: string; sort_order: number }[]) => {
+    await reorderExercises(newOrder);
   };
 
   const handleUndoWorkout = useCallback(async () => {
@@ -815,41 +797,23 @@ export default function Workout() {
         </div>
 
         {/* Exercise List */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : sessionExercises.length === 0 ? (
-          <Card className="p-8 bg-card border-border text-center mb-6">
-            <Dumbbell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-semibold text-foreground mb-2">{t('noExercisesInWorkout')}</h3>
-            <p className="text-sm text-muted-foreground">{t('addExercisesToStart')}</p>
-          </Card>
-        ) : (
-          <div className="space-y-3 mb-6">
-            {sessionExercises.map((se, index) => (
-              <Card
-                key={se.id}
-                className="p-4 bg-card border-border"
-              >
+        <div className="mb-6">
+          <DraggableExerciseList
+            items={sessionExercises}
+            onReorder={handleReorderExercises}
+            isLoading={isLoading}
+            emptyState={
+              <Card className="p-8 bg-card border-border text-center">
+                <Dumbbell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="font-semibold text-foreground mb-2">{t('noExercisesInWorkout')}</h3>
+                <p className="text-sm text-muted-foreground">{t('addExercisesToStart')}</p>
+              </Card>
+            }
+            renderItem={(se: SessionExercise, _index: number, dragHandle: React.ReactNode) => (
+              <Card className="p-4 bg-card border-border">
                 <div className="flex items-center gap-3">
-                  {/* Reorder buttons */}
-                  <div className="flex flex-col gap-1">
-                    <button
-                      onClick={() => handleMoveExercise(se.id, 'up')}
-                      disabled={index === 0}
-                      className="p-1 rounded hover:bg-secondary disabled:opacity-30 transition-colors"
-                    >
-                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                    </button>
-                    <button
-                      onClick={() => handleMoveExercise(se.id, 'down')}
-                      disabled={index === sessionExercises.length - 1}
-                      className="p-1 rounded hover:bg-secondary disabled:opacity-30 transition-colors"
-                    >
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    </button>
-                  </div>
+                  {/* Drag handle */}
+                  {dragHandle}
 
                   {/* Exercise info */}
                   <div 
@@ -908,9 +872,9 @@ export default function Workout() {
                   </div>
                 </div>
               </Card>
-            ))}
-          </div>
-        )}
+            )}
+          />
+        </div>
 
         {/* Actions */}
         <div className="space-y-3">
