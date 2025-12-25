@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Trash2, ChevronUp, ChevronDown, Dumbbell, Loader2, Play } from "lucide-react";
+import { ChevronLeft, Plus, Trash2, Dumbbell, Loader2, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,8 +15,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useTemplate, useTemplateItems, useTemplates } from "@/hooks/useTemplates";
+import { useTemplate, useTemplateItems, useTemplates, TemplateItem } from "@/hooks/useTemplates";
 import { ExercisePicker } from "@/components/ExercisePicker";
+import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { Exercise } from "@/hooks/useExercises";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkout } from "@/contexts/WorkoutContext";
@@ -89,27 +90,8 @@ export default function TemplateEditor() {
     }
   };
 
-  const handleMoveItem = async (itemId: string, direction: 'up' | 'down') => {
-    const currentIndex = items.findIndex(i => i.id === itemId);
-    if (currentIndex === -1) return;
-    
-    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (newIndex < 0 || newIndex >= items.length) return;
-    
-    const newItems = [...items];
-    [newItems[currentIndex], newItems[newIndex]] = [newItems[newIndex], newItems[currentIndex]];
-    
-    const newOrder = newItems.map((item, index) => ({
-      id: item.id,
-      sort_order: index + 1,
-    }));
-    
-    try {
-      await reorderItems.mutateAsync(newOrder);
-    } catch (error) {
-      console.error('Failed to reorder items:', error);
-      toast.error('Ошибка сортировки');
-    }
+  const handleReorderItems = async (newOrder: { id: string; sort_order: number }[]) => {
+    await reorderItems.mutateAsync(newOrder);
   };
 
   const handleDeleteTemplate = async () => {
@@ -313,39 +295,24 @@ export default function TemplateEditor() {
             <span className="text-sm text-muted-foreground">{items.length} шт.</span>
           </div>
 
-          {isLoadingItems ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : items.length === 0 ? (
-            <Card className="p-6 bg-card border-border text-center mb-4">
-              <Dumbbell className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">
-                Добавьте упражнения в шаблон
-              </p>
-            </Card>
-          ) : (
-            <div className="space-y-3 mb-4">
-              {items.map((item, index) => (
-                <Card key={item.id} className="p-4 bg-card border-border">
+          <div className="mb-4">
+            <DraggableExerciseList
+              items={items}
+              onReorder={handleReorderItems}
+              isLoading={isLoadingItems}
+              emptyState={
+                <Card className="p-6 bg-card border-border text-center">
+                  <Dumbbell className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                  <p className="text-sm text-muted-foreground">
+                    Добавьте упражнения в шаблон
+                  </p>
+                </Card>
+              }
+              renderItem={(item: TemplateItem, _index: number, dragHandle: React.ReactNode) => (
+                <Card className="p-4 bg-card border-border">
                   <div className="flex items-center gap-3">
-                    {/* Reorder buttons */}
-                    <div className="flex flex-col gap-1">
-                      <button
-                        onClick={() => handleMoveItem(item.id, 'up')}
-                        disabled={index === 0}
-                        className="p-1 rounded hover:bg-secondary disabled:opacity-30"
-                      >
-                        <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                      </button>
-                      <button
-                        onClick={() => handleMoveItem(item.id, 'down')}
-                        disabled={index === items.length - 1}
-                        className="p-1 rounded hover:bg-secondary disabled:opacity-30"
-                      >
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      </button>
-                    </div>
+                    {/* Drag handle */}
+                    {dragHandle}
 
                     {/* Exercise info */}
                     <div className="flex-1">
@@ -381,9 +348,9 @@ export default function TemplateEditor() {
                     </button>
                   </div>
                 </Card>
-              ))}
-            </div>
-          )}
+              )}
+            />
+          </div>
 
           <Button
             onClick={() => setShowPicker(true)}
