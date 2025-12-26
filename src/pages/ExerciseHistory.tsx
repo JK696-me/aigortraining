@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2, Undo2, Loader2, RefreshCw } from "lucide-react"
+import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2, Undo2, Loader2, RefreshCw, TrendingUp } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -284,9 +284,18 @@ export default function ExerciseHistory() {
                     <Card key={exercise.id} className="p-4 bg-card border-border">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="font-semibold text-foreground">{exercise.name}</h3>
-                        {exercise.rpe !== null && (
-                          <span className="text-sm text-accent">RPE {exercise.rpe}</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {exercise.rpe !== null && (
+                            <span className="text-sm text-accent">RPE {exercise.rpe}</span>
+                          )}
+                          <button
+                            onClick={() => navigate(`/exercise-progress?exercise=${exercise.exercise_id}&from=history`)}
+                            className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center"
+                            title={locale === 'ru' ? 'Прогресс' : 'Progress'}
+                          >
+                            <TrendingUp className="h-4 w-4 text-primary" />
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-2">
                         {exercise.sets.length === 0 ? (

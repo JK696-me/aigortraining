@@ -26,6 +26,7 @@ export interface SessionDetail {
   undo_available_until: string | null
   exercises: {
     id: string
+    exercise_id: string
     name: string
     rpe: number | null
     sets: { weight: number; reps: number; set_index: number }[]
@@ -183,6 +184,7 @@ export function useSessionDetails(sessionId: string | null) {
         .from('session_exercises')
         .select(`
           id,
+          exercise_id,
           rpe,
           exercise:exercises(name)
         `)
@@ -217,6 +219,7 @@ export function useSessionDetails(sessionId: string | null) {
       // Build exercises array
       const exercises = (sessionExercises || []).map(se => ({
         id: se.id,
+        exercise_id: se.exercise_id,
         name: (se.exercise as any)?.name || 'Unknown',
         rpe: se.rpe,
         sets: (setsByExercise.get(se.id) || []).map(s => ({

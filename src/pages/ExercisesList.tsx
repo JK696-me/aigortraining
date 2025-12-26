@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft, Plus, Search, Dumbbell, Edit2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Dumbbell, Edit2, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { ExerciseForm } from '@/components/ExerciseForm';
 
 export default function ExercisesList() {
   const navigate = useNavigate();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const [searchQuery, setSearchQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
@@ -20,6 +20,10 @@ export default function ExercisesList() {
   const handleEdit = (exercise: Exercise) => {
     setEditingExercise(exercise);
     setShowForm(true);
+  };
+
+  const handleViewProgress = (exerciseId: string) => {
+    navigate(`/exercise-progress?exercise=${exerciseId}&from=exercises`);
   };
 
   const handleCloseForm = () => {
@@ -105,6 +109,13 @@ export default function ExercisesList() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleViewProgress(exercise.id)}
+                      className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center"
+                      title={locale === 'ru' ? 'Прогресс' : 'Progress'}
+                    >
+                      <TrendingUp className="h-4 w-4 text-primary" />
+                    </button>
                     <button
                       onClick={() => handleEdit(exercise)}
                       className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center"
