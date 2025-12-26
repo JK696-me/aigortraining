@@ -7,11 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSets } from "@/hooks/useSessions";
+import { useSets, useSessionExercises } from "@/hooks/useSessions";
+import { useWorkout } from "@/contexts/WorkoutContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { SwipeableSetItem } from "@/components/SwipeableSetItem";
 import { RecommendationExplainer, ExplanationDetails } from "@/components/RecommendationExplainer";
+import { ExerciseSwitcher, ExerciseSwitcherItem } from "@/components/ExerciseSwitcher";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
 import { 
@@ -57,10 +59,11 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export default function Exercise() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const sessionExerciseId = searchParams.get('se');
   const { t, locale } = useLanguage();
   const { user } = useAuth();
+  const { activeSessionId } = useWorkout();
   
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
@@ -81,10 +84,68 @@ export default function Exercise() {
   const [weightValue, setWeightValue] = useState('');
   const [repsValue, setRepsValue] = useState('');
   
+  // Exercise switcher: set progress cache (id -> hasSets)
+  const [exerciseProgress, setExerciseProgress] = useState<Record<string, boolean>>({});
+  
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
   
   const { sets, updateSet, addSet, deleteSet, isLoading, refetch: refetchSets } = useSets(sessionExerciseId);
+  
+  // Get all session exercises for the switcher
+  const { exercises: allSessionExercises } = useSessionExercises(activeSessionId);
+
+  // Build switcher items with progress status
+  const switcherItems: ExerciseSwitcherItem[] = useMemo(() => {
+    return allSessionExercises
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map(se => ({
+        id: se.id,
+        exercise_id: se.exercise_id,
+        name: se.exercise?.name || 'Unknown',
+        sort_order: se.sort_order,
+        hasSets: exerciseProgress[se.id] ?? false,
+      }));
+  }, [allSessionExercises, exerciseProgress]);
+
+  // Find current index in switcher
+  const currentSwitcherIndex = useMemo(() => {
+    return switcherItems.findIndex(item => item.id === sessionExerciseId);
+  }, [switcherItems, sessionExerciseId]);
+
+  const hasPrevExercise = currentSwitcherIndex > 0;
+  const hasNextExercise = currentSwitcherIndex < switcherItems.length - 1;
+
+  // Update progress for all exercises on load
+  useEffect(() => {
+    const loadProgress = async () => {
+      if (!allSessionExercises.length) return;
+      
+      const progressMap: Record<string, boolean> = {};
+      
+      for (const se of allSessionExercises) {
+        const { data: setsData } = await supabase
+          .from('sets')
+          .select('weight, reps')
+          .eq('session_exercise_id', se.id)
+          .limit(10);
+        
+        progressMap[se.id] = setsData?.some(s => s.weight > 0 || s.reps > 0) ?? false;
+      }
+      
+      setExerciseProgress(progressMap);
+    };
+    
+    loadProgress();
+  }, [allSessionExercises]);
+
+  // Update current exercise progress when sets change
+  useEffect(() => {
+    if (sessionExerciseId && sets.length > 0) {
+      const hasSets = sets.some(s => s.weight > 0 || s.reps > 0);
+      setExerciseProgress(prev => ({ ...prev, [sessionExerciseId]: hasSets }));
+    }
+  }, [sessionExerciseId, sets]);
 
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
@@ -232,6 +293,33 @@ export default function Exercise() {
       setSelectedSetIndex(selectedSetIndex + 1);
     }
   }, [currentSet, updateSet, selectedSetIndex, sets.length, triggerPreviewUpdate]);
+
+  // Navigation handlers for exercise switcher
+  const handleSwitchExercise = useCallback((newSessionExerciseId: string) => {
+    if (newSessionExerciseId === sessionExerciseId) return;
+    
+    // Update progress for current exercise
+    if (sessionExerciseId) {
+      const hasSetsValue = sets.some(s => s.weight > 0 || s.reps > 0);
+      setExerciseProgress(prev => ({ ...prev, [sessionExerciseId]: hasSetsValue }));
+    }
+    
+    // Navigate to new exercise
+    setSearchParams({ se: newSessionExerciseId });
+    setSelectedSetIndex(0);
+  }, [sessionExerciseId, sets, setSearchParams]);
+
+  const handlePrevExercise = useCallback(() => {
+    if (hasPrevExercise) {
+      handleSwitchExercise(switcherItems[currentSwitcherIndex - 1].id);
+    }
+  }, [hasPrevExercise, switcherItems, currentSwitcherIndex, handleSwitchExercise]);
+
+  const handleNextExercise = useCallback(() => {
+    if (hasNextExercise) {
+      handleSwitchExercise(switcherItems[currentSwitcherIndex + 1].id);
+    }
+  }, [hasNextExercise, switcherItems, currentSwitcherIndex, handleSwitchExercise]);
 
   const handleWeightChange = (delta: number) => {
     const currentValue = parseFloat(weightValue) || 0;
@@ -462,7 +550,7 @@ export default function Exercise() {
     <Layout>
       <div className="px-4 pt-12 safe-top pb-24">
         {/* Header */}
-        <div className="mb-6">
+        <div className="mb-4">
           <button
             onClick={() => navigate(`/workout?session=${sessionExercise.session_id}`)}
             className="flex items-center gap-1 text-muted-foreground mb-3"
@@ -484,6 +572,20 @@ export default function Exercise() {
             {t('setOf')} {selectedSetIndex + 1} {t('of')} {sets.length}
           </p>
         </div>
+
+        {/* Exercise Switcher */}
+        {switcherItems.length > 1 && (
+          <ExerciseSwitcher
+            exercises={switcherItems}
+            currentExerciseId={sessionExerciseId}
+            onSelect={handleSwitchExercise}
+            onPrev={handlePrevExercise}
+            onNext={handleNextExercise}
+            hasPrev={hasPrevExercise}
+            hasNext={hasNextExercise}
+            className="mb-6"
+          />
+        )}
 
         {/* Set Tabs */}
         <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
