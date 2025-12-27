@@ -118,6 +118,104 @@ export type Database = {
           },
         ]
       }
+      health_attachments: {
+        Row: {
+          created_at: string
+          file_path: string
+          file_url: string | null
+          health_entry_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          file_path: string
+          file_url?: string | null
+          health_entry_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          file_path?: string
+          file_url?: string | null
+          health_entry_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "health_attachments_health_entry_id_fkey"
+            columns: ["health_entry_id"]
+            isOneToOne: false
+            referencedRelation: "health_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "health_attachments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      health_entries: {
+        Row: {
+          biceps_cm: number | null
+          chest_cm: number | null
+          created_at: string
+          date: string
+          glutes_cm: number | null
+          id: string
+          notes: string | null
+          shoulders_cm: number | null
+          sides_cm: number | null
+          thighs_cm: number | null
+          user_id: string
+          waist_cm: number | null
+          weight_kg: number | null
+        }
+        Insert: {
+          biceps_cm?: number | null
+          chest_cm?: number | null
+          created_at?: string
+          date: string
+          glutes_cm?: number | null
+          id?: string
+          notes?: string | null
+          shoulders_cm?: number | null
+          sides_cm?: number | null
+          thighs_cm?: number | null
+          user_id: string
+          waist_cm?: number | null
+          weight_kg?: number | null
+        }
+        Update: {
+          biceps_cm?: number | null
+          chest_cm?: number | null
+          created_at?: string
+          date?: string
+          glutes_cm?: number | null
+          id?: string
+          notes?: string | null
+          shoulders_cm?: number | null
+          sides_cm?: number | null
+          thighs_cm?: number | null
+          user_id?: string
+          waist_cm?: number | null
+          weight_kg?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "health_entries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_exercises: {
         Row: {
           created_at: string
