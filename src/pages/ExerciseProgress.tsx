@@ -52,6 +52,12 @@ interface ChartDataPoint {
   weight: number;
 }
 
+interface DebugInfo {
+  totalSessionExercises: number;
+  completedSessions: number;
+  withSets: number;
+}
+
 export default function ExerciseProgress() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -67,6 +73,7 @@ export default function ExerciseProgress() {
   const [sessionHistory, setSessionHistory] = useState<SessionHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showMore, setShowMore] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
 
   // Load all data
   useEffect(() => {
@@ -100,59 +107,89 @@ export default function ExerciseProgress() {
         }
 
         // Load session history (last 20 completed sessions)
-        const { data: sessionExercises } = await supabase
-          .from('session_exercises')
+        // Query from sessions first, then filter session_exercises by exercise_id
+        const { data: completedSessions, error: sessionsError } = await supabase
+          .from('sessions')
           .select(`
             id,
-            rpe,
-            session:sessions!inner(id, completed_at, status)
+            completed_at,
+            session_exercises!inner(
+              id,
+              exercise_id,
+              rpe,
+              sets(
+                set_index,
+                weight,
+                reps
+              )
+            )
           `)
-          .eq('exercise_id', exerciseId)
-          .eq('sessions.status', 'completed')
-          .eq('sessions.user_id', user.id)
-          .order('sessions(completed_at)', { ascending: false })
-          .limit(20);
+          .eq('user_id', user.id)
+          .eq('status', 'completed')
+          .not('completed_at', 'is', null)
+          .order('completed_at', { ascending: false })
+          .limit(50); // Get more sessions to filter by exercise_id
 
-        if (sessionExercises && sessionExercises.length > 0) {
-          const history: SessionHistoryItem[] = [];
-          
-          for (const se of sessionExercises) {
-            const session = se.session as { id: string; completed_at: string; status: string };
+        console.log('Sessions query result:', { completedSessions, sessionsError });
+
+        // Filter for sessions that have this exercise and build history
+        const history: SessionHistoryItem[] = [];
+        let totalSessionExercisesForExercise = 0;
+
+        if (completedSessions) {
+          for (const session of completedSessions) {
+            // Find session_exercises for this specific exercise_id
+            const matchingExercises = session.session_exercises.filter(
+              (se: { exercise_id: string }) => se.exercise_id === exerciseId
+            );
             
-            const { data: sets } = await supabase
-              .from('sets')
-              .select('weight, reps, set_index')
-              .eq('session_exercise_id', se.id)
-              .order('set_index');
+            totalSessionExercisesForExercise += matchingExercises.length;
 
-            if (sets && sets.length > 0) {
-              // Find top set (max weight, then max reps)
-              let topWeight = 0;
-              let topReps = 0;
-              for (const s of sets) {
-                if (s.weight > topWeight || (s.weight === topWeight && s.reps > topReps)) {
-                  topWeight = s.weight;
-                  topReps = s.reps;
+            for (const se of matchingExercises) {
+              const sets = se.sets || [];
+              
+              if (sets.length > 0) {
+                // Find top set (max weight, then max reps)
+                let topWeight = 0;
+                let topReps = 0;
+                for (const s of sets) {
+                  if (s.weight > topWeight || (s.weight === topWeight && s.reps > topReps)) {
+                    topWeight = s.weight;
+                    topReps = s.reps;
+                  }
                 }
+
+                history.push({
+                  session_id: session.id,
+                  completed_at: session.completed_at!,
+                  rpe: se.rpe,
+                  topSetWeight: topWeight,
+                  topSetReps: topReps,
+                  sets: sets
+                    .sort((a: { set_index: number }, b: { set_index: number }) => a.set_index - b.set_index)
+                    .map((s: { weight: number; reps: number; set_index: number }) => ({
+                      weight: s.weight,
+                      reps: s.reps,
+                      set_index: s.set_index,
+                    })),
+                });
               }
 
-              history.push({
-                session_id: session.id,
-                completed_at: session.completed_at,
-                rpe: se.rpe,
-                topSetWeight: topWeight,
-                topSetReps: topReps,
-                sets: sets.map(s => ({
-                  weight: s.weight,
-                  reps: s.reps,
-                  set_index: s.set_index,
-                })),
-              });
+              // Limit to 20 history items
+              if (history.length >= 20) break;
             }
+            if (history.length >= 20) break;
           }
-          
-          setSessionHistory(history);
         }
+
+        // Set debug info
+        setDebugInfo({
+          totalSessionExercises: totalSessionExercisesForExercise,
+          completedSessions: completedSessions?.length || 0,
+          withSets: history.length,
+        });
+
+        setSessionHistory(history);
       } catch (error) {
         console.error('Failed to load exercise progress:', error);
       } finally {
@@ -225,6 +262,15 @@ export default function ExerciseProgress() {
           <p className="text-muted-foreground">
             {locale === 'ru' ? 'Прогресс по упражнению' : 'Exercise progress'}
           </p>
+          {/* Debug info */}
+          {debugInfo && (
+            <p className="text-xs text-muted-foreground/60 mt-1 font-mono">
+              {locale === 'ru' 
+                ? `Сессий: ${debugInfo.completedSessions} | По упражнению: ${debugInfo.totalSessionExercises} | С сетами: ${debugInfo.withSets}`
+                : `Sessions: ${debugInfo.completedSessions} | For exercise: ${debugInfo.totalSessionExercises} | With sets: ${debugInfo.withSets}`
+              }
+            </p>
+          )}
         </div>
 
         {isLoading ? (
