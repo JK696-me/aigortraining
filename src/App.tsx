@@ -20,6 +20,8 @@ import ExerciseProgress from "./pages/ExerciseProgress";
 import ExercisesList from "./pages/ExercisesList";
 import Templates from "./pages/Templates";
 import TemplateEditor from "./pages/TemplateEditor";
+import Health from "./pages/Health";
+import HealthEntry from "./pages/HealthEntry";
 import Settings from "./pages/Settings";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -58,6 +60,8 @@ const App = () => (
                   <Route path="/exercises" element={<ProtectedRoute><ExercisesList /></ProtectedRoute>} />
                   <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
                   <Route path="/template-editor" element={<ProtectedRoute><TemplateEditor /></ProtectedRoute>} />
+                  <Route path="/health" element={<ProtectedRoute><Health /></ProtectedRoute>} />
+                  <Route path="/health-entry" element={<ProtectedRoute><HealthEntry /></ProtectedRoute>} />
                   <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
