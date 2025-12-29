@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
-import { syncEngine, SyncState, EntityType, ActionType } from '@/lib/offlineSyncEngine'
+import { syncEngine, SyncState, EntityType, ActionType, Dependency, OperationStatus } from '@/lib/offlineSyncEngine'
 import { useAuth } from '@/contexts/AuthContext'
+
+interface EnqueueOptions {
+  local_id?: string
+  depends_on?: Dependency[]
+}
 
 interface SyncContextType {
   state: SyncState
@@ -8,11 +13,14 @@ interface SyncContextType {
     entity: EntityType,
     action: ActionType,
     payload: Record<string, unknown>,
-    idempotencyKey?: string
-  ) => Promise<{ success: boolean; synced: boolean; error?: string }>
+    idempotencyKey?: string,
+    options?: EnqueueOptions
+  ) => Promise<{ success: boolean; synced: boolean; error?: string; id?: string }>
   retryFailed: () => Promise<void>
   processSyncQueue: () => Promise<void>
   generateId: () => string
+  getServerId: (entity: EntityType, localId: string) => string | undefined
+  getOperationStatus: (entity: EntityType, localId: string) => Promise<OperationStatus | 'synced'>
 }
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined)
@@ -35,9 +43,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       entity: EntityType,
       action: ActionType,
       payload: Record<string, unknown>,
-      idempotencyKey?: string
+      idempotencyKey?: string,
+      options?: EnqueueOptions
     ) => {
-      return syncEngine.enqueue(entity, action, payload, idempotencyKey)
+      return syncEngine.enqueue(entity, action, payload, idempotencyKey, options)
     },
     []
   )
@@ -54,8 +63,24 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     return syncEngine.generateId()
   }, [])
 
+  const getServerId = useCallback((entity: EntityType, localId: string) => {
+    return syncEngine.getServerId(entity, localId)
+  }, [])
+
+  const getOperationStatus = useCallback(async (entity: EntityType, localId: string) => {
+    return syncEngine.getOperationStatusAsync(entity, localId)
+  }, [])
+
   return (
-    <SyncContext.Provider value={{ state, enqueue, retryFailed, processSyncQueue, generateId }}>
+    <SyncContext.Provider value={{ 
+      state, 
+      enqueue, 
+      retryFailed, 
+      processSyncQueue, 
+      generateId,
+      getServerId,
+      getOperationStatus
+    }}>
       {children}
     </SyncContext.Provider>
   )
@@ -82,12 +107,19 @@ export function useSyncedMutation<T extends Record<string, unknown>>(
   const [isLoading, setIsLoading] = useState(false)
 
   const create = useCallback(
-    async (data: T, idempotencyKey?: string) => {
+    async (
+      data: T, 
+      idempotencyKey?: string,
+      enqueueOptions?: EnqueueOptions
+    ) => {
       setIsLoading(true)
       try {
-        const id = (data.id as string) || generateId()
+        const id = (data.id as string) || enqueueOptions?.local_id || generateId()
         const payload = { ...data, id }
-        const result = await enqueue(entity, 'create', payload, idempotencyKey)
+        const result = await enqueue(entity, 'create', payload, idempotencyKey, {
+          ...enqueueOptions,
+          local_id: id,
+        })
 
         if (result.success) {
           if (result.synced) {
@@ -108,11 +140,16 @@ export function useSyncedMutation<T extends Record<string, unknown>>(
   )
 
   const update = useCallback(
-    async (id: string, data: Partial<T>, idempotencyKey?: string) => {
+    async (
+      id: string, 
+      data: Partial<T>, 
+      idempotencyKey?: string,
+      enqueueOptions?: EnqueueOptions
+    ) => {
       setIsLoading(true)
       try {
         const payload = { ...data, id }
-        const result = await enqueue(entity, 'update', payload, idempotencyKey)
+        const result = await enqueue(entity, 'update', payload, idempotencyKey, enqueueOptions)
 
         if (result.success) {
           if (result.synced) {
@@ -158,3 +195,6 @@ export function useSyncedMutation<T extends Record<string, unknown>>(
 
   return { create, update, remove, isLoading }
 }
+
+// Re-export types for convenience
+export type { Dependency, EntityType, ActionType, OperationStatus } from '@/lib/offlineSyncEngine'
