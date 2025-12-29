@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play, RotateCcw, Plus, ChevronRight, Zap, Loader2, FileText, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { useWorkout } from "@/contexts/WorkoutContext";
+import { seedExercisesForUser } from "@/lib/seedExercises";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function Home() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { t, locale } = useLanguage();
   const { user } = useAuth();
   const { templates, isLoading: isLoadingTemplates } = useTemplates();
   const [isRepeating, setIsRepeating] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const seedAttemptedRef = useRef(false);
   
   const { 
     draft, 
@@ -29,6 +33,25 @@ export default function Home() {
     setActiveSession,
     refreshActiveSession 
   } = useWorkout();
+
+  // Seed exercises for new users
+  useEffect(() => {
+    if (!user?.id || seedAttemptedRef.current) return;
+    
+    seedAttemptedRef.current = true;
+    
+    seedExercisesForUser(user.id).then(({ seeded }) => {
+      if (seeded) {
+        // Invalidate exercises query to refresh the list
+        queryClient.invalidateQueries({ queryKey: ['exercises'] });
+        toast.success(
+          locale === 'ru' 
+            ? 'Мы добавили базовые упражнения — можно сразу начинать тренировку.' 
+            : 'We added basic exercises — you can start training right away.'
+        );
+      }
+    });
+  }, [user?.id, queryClient, locale]);
 
   // Refresh active session on focus
   useEffect(() => {
