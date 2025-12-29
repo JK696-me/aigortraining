@@ -66,8 +66,7 @@ export default function Exercise() {
   const { activeSessionId } = useWorkout();
   
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
-  const [selectedSetIndex, setSelectedSetIndex] = useState<number | null>(null);
-  const [initialSetIndexLoaded, setInitialSetIndexLoaded] = useState(false);
+  const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
@@ -155,10 +154,6 @@ export default function Exercise() {
   useEffect(() => {
     if (!sessionExerciseId || !user) return;
     
-    // Reset initial set index loaded flag when switching exercises
-    setInitialSetIndexLoaded(false);
-    setSelectedSetIndex(null);
-    
     const loadData = async () => {
       const { data } = await supabase
         .from('session_exercises')
@@ -171,7 +166,7 @@ export default function Exercise() {
         .single();
       
       if (data) {
-        setSessionExercise(data as SessionExerciseData & { active_set_index?: number | null });
+        setSessionExercise(data as SessionExerciseData);
         setCurrentRpe(data.rpe);
         
         // Load template name if from template
@@ -244,36 +239,8 @@ export default function Exercise() {
     setPreviewTrigger(prev => prev + 1);
   }, []);
 
-  // Determine initial set index when sets load
-  useEffect(() => {
-    if (initialSetIndexLoaded || sets.length === 0 || !sessionExercise) return;
-    
-    const seData = sessionExercise as SessionExerciseData & { active_set_index?: number | null };
-    let targetIndex = 0;
-    
-    // A) If active_set_index is set and valid
-    if (seData.active_set_index !== null && seData.active_set_index !== undefined) {
-      const activeIdx = seData.active_set_index;
-      if (activeIdx >= 0 && activeIdx < sets.length) {
-        targetIndex = activeIdx;
-      }
-    } else {
-      // B) Find first incomplete set (weight == 0 OR reps == 0)
-      const firstIncompleteIdx = sets.findIndex(s => s.weight === 0 || s.reps === 0);
-      if (firstIncompleteIdx !== -1) {
-        targetIndex = firstIncompleteIdx;
-      } else {
-        // All complete - use last set
-        targetIndex = sets.length - 1;
-      }
-    }
-    
-    setSelectedSetIndex(targetIndex);
-    setInitialSetIndexLoaded(true);
-  }, [sets, sessionExercise, initialSetIndexLoaded]);
-
   // Update local values when set changes
-  const currentSet = selectedSetIndex !== null ? sets[selectedSetIndex] : null;
+  const currentSet = sets[selectedSetIndex];
   
   useEffect(() => {
     if (currentSet) {
@@ -309,12 +276,9 @@ export default function Exercise() {
     triggerPreviewUpdate();
   }, [currentSet, updateSet, triggerPreviewUpdate]);
 
-  // Save active_set_index to DB (declared early for use in saveReps)
-  const saveActiveSetIndexRef = useRef<(index: number) => Promise<void>>();
-  
   // Save reps and move to next set
   const saveReps = useCallback((value: string, moveToNext: boolean = false) => {
-    if (!currentSet || selectedSetIndex === null) return;
+    if (!currentSet) return;
     const numValue = parseInt(value, 10);
     if (isNaN(numValue) || numValue < 0) {
       setRepsValue(currentSet.reps.toString());
@@ -324,32 +288,15 @@ export default function Exercise() {
     updateSet({ setId: currentSet.id, updates: { reps: numValue } });
     triggerPreviewUpdate();
     
-    // Check if current set is now complete and auto-advance
-    const currentWeight = parseFloat(weightValue) || 0;
-    const isSetComplete = currentWeight > 0 && numValue > 0;
-    
-    if (isSetComplete && selectedSetIndex < sets.length - 1) {
-      const nextIndex = selectedSetIndex + 1;
-      setSelectedSetIndex(nextIndex);
-      saveActiveSetIndexRef.current?.(nextIndex);
-    } else if (moveToNext && selectedSetIndex < sets.length - 1) {
-      const nextIndex = selectedSetIndex + 1;
-      setSelectedSetIndex(nextIndex);
-      saveActiveSetIndexRef.current?.(nextIndex);
+    // Move to next set if available
+    if (moveToNext && selectedSetIndex < sets.length - 1) {
+      setSelectedSetIndex(selectedSetIndex + 1);
     }
-  }, [currentSet, updateSet, selectedSetIndex, sets.length, triggerPreviewUpdate, weightValue]);
+  }, [currentSet, updateSet, selectedSetIndex, sets.length, triggerPreviewUpdate]);
 
   // Navigation handlers for exercise switcher
-  const handleSwitchExercise = useCallback(async (newSessionExerciseId: string) => {
+  const handleSwitchExercise = useCallback((newSessionExerciseId: string) => {
     if (newSessionExerciseId === sessionExerciseId) return;
-    
-    // Save current active_set_index before switching
-    if (sessionExerciseId && selectedSetIndex !== null) {
-      await supabase
-        .from('session_exercises')
-        .update({ active_set_index: selectedSetIndex })
-        .eq('id', sessionExerciseId);
-    }
     
     // Update progress for current exercise
     if (sessionExerciseId) {
@@ -357,9 +304,10 @@ export default function Exercise() {
       setExerciseProgress(prev => ({ ...prev, [sessionExerciseId]: hasSetsValue }));
     }
     
-    // Navigate to new exercise - let useEffect determine initial set
+    // Navigate to new exercise
     setSearchParams({ se: newSessionExerciseId });
-  }, [sessionExerciseId, sets, setSearchParams, selectedSetIndex]);
+    setSelectedSetIndex(0);
+  }, [sessionExerciseId, sets, setSearchParams]);
 
   const handlePrevExercise = useCallback(() => {
     if (hasPrevExercise) {
@@ -440,20 +388,6 @@ export default function Exercise() {
     handleWeightChange(incrementValue);
   };
 
-  // Save active_set_index to DB
-  const saveActiveSetIndex = useCallback(async (index: number) => {
-    if (!sessionExerciseId) return;
-    await supabase
-      .from('session_exercises')
-      .update({ active_set_index: index })
-      .eq('id', sessionExerciseId);
-  }, [sessionExerciseId]);
-
-  // Set the ref for use in saveReps
-  useEffect(() => {
-    saveActiveSetIndexRef.current = saveActiveSetIndex;
-  }, [saveActiveSetIndex]);
-
   const handleSetSelect = (index: number) => {
     // Save current values before switching
     if (currentSet) {
@@ -461,7 +395,6 @@ export default function Exercise() {
       saveReps(repsValue, false);
     }
     setSelectedSetIndex(index);
-    saveActiveSetIndex(index);
   };
 
   // Apply recommendation to DB
@@ -636,7 +569,7 @@ export default function Exercise() {
             </Button>
           </div>
           <p className="text-muted-foreground">
-            {t('setOf')} {(selectedSetIndex ?? 0) + 1} {t('of')} {sets.length}
+            {t('setOf')} {selectedSetIndex + 1} {t('of')} {sets.length}
           </p>
         </div>
 
@@ -842,9 +775,8 @@ export default function Exercise() {
                 onDelete={() => {
                   deleteSet(set.id);
                   // Adjust selected index if needed
-                  const currentIdx = selectedSetIndex ?? 0;
-                  if (currentIdx >= sets.length - 1 && currentIdx > 0) {
-                    setSelectedSetIndex(currentIdx - 1);
+                  if (selectedSetIndex >= sets.length - 1 && selectedSetIndex > 0) {
+                    setSelectedSetIndex(selectedSetIndex - 1);
                   }
                   triggerPreviewUpdate();
                   toast.success('Подход удалён');

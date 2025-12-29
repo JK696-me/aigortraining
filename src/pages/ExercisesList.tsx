@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useExercises, Exercise } from '@/hooks/useExercises';
 import { ExerciseForm } from '@/components/ExerciseForm';
-import { EmptyState } from '@/components/EmptyState';
 
 export default function ExercisesList() {
   const navigate = useNavigate();
@@ -17,8 +16,6 @@ export default function ExercisesList() {
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
   
   const { exercises, isLoading } = useExercises(searchQuery);
-
-  const handleAddExercise = () => setShowForm(true);
 
   const handleEdit = (exercise: Exercise) => {
     setEditingExercise(exercise);
@@ -87,20 +84,11 @@ export default function ExercisesList() {
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         ) : exercises.length === 0 ? (
-          <EmptyState
-            icon={Dumbbell}
-            title={locale === 'ru' ? 'Упражнений пока нет' : 'No exercises yet'}
-            description={locale === 'ru' 
-              ? 'Добавьте базовые или создайте своё упражнение' 
-              : 'Add basic exercises or create your own'}
-            actions={[
-              {
-                label: locale === 'ru' ? 'Добавить упражнение' : 'Add exercise',
-                onClick: handleAddExercise,
-                icon: Plus,
-              },
-            ]}
-          />
+          <Card className="p-8 bg-card border-border text-center">
+            <Dumbbell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="font-semibold text-foreground mb-2">{t('noExercises')}</h3>
+            <p className="text-sm text-muted-foreground">{t('addFirstExercise')}</p>
+          </Card>
         ) : (
           <div className="space-y-3">
             {exercises.map((exercise) => (

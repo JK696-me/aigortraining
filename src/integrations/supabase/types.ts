@@ -218,7 +218,6 @@ export type Database = {
       }
       session_exercises: {
         Row: {
-          active_set_index: number | null
           created_at: string
           exercise_id: string
           id: string
@@ -228,7 +227,6 @@ export type Database = {
           sort_order: number | null
         }
         Insert: {
-          active_set_index?: number | null
           created_at?: string
           exercise_id: string
           id?: string
@@ -238,7 +236,6 @@ export type Database = {
           sort_order?: number | null
         }
         Update: {
-          active_set_index?: number | null
           created_at?: string
           exercise_id?: string
           id?: string

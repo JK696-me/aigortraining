@@ -52,9 +52,6 @@ export const queryKeys = {
   
   // User settings
   userSettings: (userId: string) => ['user-settings', userId] as const,
-  
-  // Onboarding
-  onboardingState: (userId: string) => ['onboarding-state', userId] as const,
 } as const
 
 // Get staleTime for a specific query key

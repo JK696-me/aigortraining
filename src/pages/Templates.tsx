@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Layout } from "@/components/Layout";
 import { useTemplates } from "@/hooks/useTemplates";
 import { toast } from "sonner";
-import { EmptyState } from "@/components/EmptyState";
 
 export default function Templates() {
   const navigate = useNavigate();
@@ -96,18 +95,17 @@ export default function Templates() {
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         ) : templates.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title="Нет шаблонов"
-            description="Шаблоны ускоряют старт тренировки"
-            actions={[
-              {
-                label: 'Создать первый шаблон',
-                onClick: () => setIsCreatingNew(true),
-                icon: Plus,
-              },
-            ]}
-          />
+          <Card className="p-8 bg-card border-border text-center">
+            <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="font-semibold text-foreground mb-2">Нет шаблонов</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Создайте шаблон для быстрого запуска тренировок
+            </p>
+            <Button onClick={() => setIsCreatingNew(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Создать шаблон
+            </Button>
+          </Card>
         ) : (
           <div className="space-y-3">
             {templates.map((template) => (

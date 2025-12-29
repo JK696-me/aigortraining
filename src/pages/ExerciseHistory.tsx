@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2, Undo2, Loader2, RefreshCw, TrendingUp, Play } from "lucide-react"
+import { ChevronLeft, Calendar, Clock, Dumbbell, ChevronRight, MoreVertical, Trash2, Undo2, Loader2, RefreshCw, TrendingUp } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -384,16 +384,8 @@ export default function ExerciseHistory() {
         ) : sessions.length === 0 ? (
           <Card className="p-8 bg-card border-border text-center">
             <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-semibold text-foreground mb-2">
-              {locale === 'ru' ? 'Здесь появятся ваши тренировки' : 'Your workouts will appear here'}
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {locale === 'ru' ? 'Завершите первую тренировку для отображения истории' : 'Complete your first workout to see history'}
-            </p>
-            <Button onClick={() => navigate('/workout')}>
-              <Play className="h-4 w-4 mr-2" />
-              {locale === 'ru' ? 'Записать первую тренировку' : 'Record first workout'}
-            </Button>
+            <h3 className="font-semibold text-foreground mb-2">{t('noCompletedWorkouts')}</h3>
+            <p className="text-sm text-muted-foreground">{t('completeFirstWorkout')}</p>
           </Card>
         ) : (
           <div className="space-y-3">
