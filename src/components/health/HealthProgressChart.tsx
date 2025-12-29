@@ -1,28 +1,14 @@
 import { useMemo, useState } from "react"
 import { useLanguage } from "@/contexts/LanguageContext"
+import { useAuth } from "@/contexts/AuthContext"
+import { supabase } from "@/integrations/supabase/client"
+import { useQuery } from "@tanstack/react-query"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
 import { format, subDays, parseISO } from "date-fns"
 import { ru, enUS } from "date-fns/locale"
-import { TrendingDown, TrendingUp, Minus } from "lucide-react"
-
-interface HealthEntry {
-  id: string
-  date: string
-  weight_kg: number | null
-  shoulders_cm: number | null
-  chest_cm: number | null
-  biceps_cm: number | null
-  waist_cm: number | null
-  sides_cm: number | null
-  glutes_cm: number | null
-  thighs_cm: number | null
-}
-
-interface HealthProgressChartProps {
-  entries: HealthEntry[]
-}
+import { TrendingDown, TrendingUp, Minus, BarChart3 } from "lucide-react"
 
 type PeriodType = "30" | "90" | "all"
 type MeasurementKey = "shoulders_cm" | "chest_cm" | "biceps_cm" | "waist_cm" | "sides_cm" | "glutes_cm" | "thighs_cm"
@@ -37,48 +23,56 @@ const measurementLabels: Record<MeasurementKey, { ru: string; en: string }> = {
   thighs_cm: { ru: "Бёдра", en: "Thighs" },
 }
 
-export function HealthProgressChart({ entries }: HealthProgressChartProps) {
+export function HealthProgressChart() {
   const { locale } = useLanguage()
+  const { user } = useAuth()
   const t = translations[locale]
   const dateLocale = locale === "ru" ? ru : enUS
 
   const [period, setPeriod] = useState<PeriodType>("30")
   const [secondaryMetric, setSecondaryMetric] = useState<MeasurementKey | "none">("waist_cm")
 
-  const filteredEntries = useMemo(() => {
-    if (!entries.length) return []
-    
-    const now = new Date()
-    let cutoffDate: Date | null = null
-    
-    if (period === "30") {
-      cutoffDate = subDays(now, 30)
-    } else if (period === "90") {
-      cutoffDate = subDays(now, 90)
-    }
+  const startDate = useMemo(() => {
+    if (period === "all") return null
+    return format(subDays(new Date(), parseInt(period)), "yyyy-MM-dd")
+  }, [period])
 
-    return entries
-      .filter(e => {
-        if (!cutoffDate) return true
-        return parseISO(e.date) >= cutoffDate
-      })
-      .sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime())
-  }, [entries, period])
+  const { data: entries = [], isLoading } = useQuery({
+    queryKey: ["health-chart", user?.id, period],
+    queryFn: async () => {
+      if (!user) return []
+
+      let query = supabase
+        .from("health_entries")
+        .select("id, date, weight_kg, shoulders_cm, chest_cm, biceps_cm, waist_cm, sides_cm, glutes_cm, thighs_cm")
+        .eq("user_id", user.id)
+        .order("date", { ascending: true })
+
+      if (startDate) {
+        query = query.gte("date", startDate)
+      }
+
+      const { data, error } = await query
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!user,
+  })
 
   const chartData = useMemo(() => {
-    return filteredEntries.map(e => ({
+    return entries.map(e => ({
       date: format(parseISO(e.date), "dd.MM", { locale: dateLocale }),
       fullDate: e.date,
       weight: e.weight_kg,
       measurement: secondaryMetric !== "none" ? e[secondaryMetric] : null,
     }))
-  }, [filteredEntries, secondaryMetric, dateLocale])
+  }, [entries, secondaryMetric, dateLocale])
 
   const trendAnalysis = useMemo(() => {
-    if (filteredEntries.length < 2) return null
+    if (entries.length < 2) return null
 
-    const first = filteredEntries[0]
-    const last = filteredEntries[filteredEntries.length - 1]
+    const first = entries[0]
+    const last = entries[entries.length - 1]
 
     const weightDiff = first.weight_kg && last.weight_kg 
       ? last.weight_kg - first.weight_kg 
@@ -89,7 +83,7 @@ export function HealthProgressChart({ entries }: HealthProgressChartProps) {
       : null
 
     return { weightDiff, measurementDiff }
-  }, [filteredEntries, secondaryMetric])
+  }, [entries, secondaryMetric])
 
   const getInterpretation = () => {
     if (!trendAnalysis) return null
@@ -124,10 +118,21 @@ export function HealthProgressChart({ entries }: HealthProgressChartProps) {
     return `${sign}${diff.toFixed(1)} ${unit}`
   }
 
+  if (isLoading) {
+    return (
+      <Card className="mb-6">
+        <CardContent className="py-8">
+          <div className="h-[200px] animate-pulse bg-secondary rounded" />
+        </CardContent>
+      </Card>
+    )
+  }
+
   if (entries.length < 2) {
     return (
       <Card className="mb-6">
         <CardContent className="py-8 text-center">
+          <BarChart3 className="h-10 w-10 mx-auto mb-3 text-muted-foreground opacity-50" />
           <p className="text-muted-foreground">{t.needMoreData}</p>
         </CardContent>
       </Card>
@@ -137,7 +142,10 @@ export function HealthProgressChart({ entries }: HealthProgressChartProps) {
   return (
     <Card className="mb-6">
       <CardHeader className="pb-2">
-        <CardTitle className="text-lg">{t.progressChart}</CardTitle>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <BarChart3 className="h-5 w-5" />
+          {t.progressChart}
+        </CardTitle>
         <div className="flex flex-wrap gap-2 mt-2">
           <Select value={period} onValueChange={(v) => setPeriod(v as PeriodType)}>
             <SelectTrigger className="w-[120px]">
@@ -240,7 +248,9 @@ export function HealthProgressChart({ entries }: HealthProgressChartProps) {
                   </div>
                 )}
                 {getInterpretation() && (
-                  <p className="text-muted-foreground italic mt-2">{getInterpretation()}</p>
+                  <p className="text-muted-foreground italic mt-2 p-2 bg-secondary/50 rounded text-xs">
+                    💡 {getInterpretation()}
+                  </p>
                 )}
               </div>
             )}

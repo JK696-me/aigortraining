@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, Plus, X, Image, Upload, Loader2 } from 'lucide-react';
 import { Card } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Layout } from "@/components/Layout";
+import { PreviousValueHint } from "@/components/health/PreviousValueHint";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,6 +26,17 @@ interface HealthEntryData {
   glutes_cm: string;
   thighs_cm: string;
   notes: string;
+}
+
+interface PreviousEntry {
+  weight_kg: number | null;
+  shoulders_cm: number | null;
+  chest_cm: number | null;
+  biceps_cm: number | null;
+  waist_cm: number | null;
+  sides_cm: number | null;
+  glutes_cm: number | null;
+  thighs_cm: number | null;
 }
 
 interface Attachment {
@@ -60,12 +72,40 @@ export default function HealthEntry() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isLoading, setIsLoading] = useState(!!entryId);
   const [isSaving, setIsSaving] = useState(false);
+  const [previousEntry, setPreviousEntry] = useState<PreviousEntry | null>(null);
 
   useEffect(() => {
     if (entryId && user) {
       loadEntry();
     }
   }, [entryId, user]);
+
+  // Load previous entry when date changes
+  useEffect(() => {
+    if (user && formData.date) {
+      loadPreviousEntry(formData.date);
+    }
+  }, [user, formData.date]);
+
+  const loadPreviousEntry = async (currentDate: string) => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('health_entries')
+        .select('weight_kg, shoulders_cm, chest_cm, biceps_cm, waist_cm, sides_cm, glutes_cm, thighs_cm')
+        .eq('user_id', user.id)
+        .lt('date', currentDate)
+        .order('date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      setPreviousEntry(data);
+    } catch (error) {
+      console.error('Failed to load previous entry:', error);
+    }
+  };
 
   const loadEntry = async () => {
     if (!entryId || !user) return;
@@ -176,8 +216,6 @@ export default function HealthEntry() {
 
     setIsSaving(true);
     try {
-      const numericFields = ['weight_kg', 'shoulders_cm', 'chest_cm', 'biceps_cm', 'waist_cm', 'sides_cm', 'glutes_cm', 'thighs_cm'] as const;
-      
       const entryData = {
         user_id: user.id,
         date: formData.date,
@@ -273,16 +311,16 @@ export default function HealthEntry() {
     }
   };
 
-  const measurementFields = [
-    { key: 'weight_kg', label: locale === 'ru' ? 'Вес (кг)' : 'Weight (kg)' },
-    { key: 'shoulders_cm', label: locale === 'ru' ? 'Плечи (см)' : 'Shoulders (cm)' },
-    { key: 'chest_cm', label: locale === 'ru' ? 'Грудь (см)' : 'Chest (cm)' },
-    { key: 'biceps_cm', label: locale === 'ru' ? 'Бицепс (см)' : 'Biceps (cm)' },
-    { key: 'waist_cm', label: locale === 'ru' ? 'Талия (см)' : 'Waist (cm)' },
-    { key: 'sides_cm', label: locale === 'ru' ? 'Бока (см)' : 'Sides (cm)' },
-    { key: 'glutes_cm', label: locale === 'ru' ? 'Ягодицы (см)' : 'Glutes (cm)' },
-    { key: 'thighs_cm', label: locale === 'ru' ? 'Бёдра (см)' : 'Thighs (cm)' },
-  ] as const;
+  const measurementFields = useMemo(() => [
+    { key: 'weight_kg' as const, label: locale === 'ru' ? 'Вес (кг)' : 'Weight (kg)', unit: locale === 'ru' ? 'кг' : 'kg' },
+    { key: 'shoulders_cm' as const, label: locale === 'ru' ? 'Плечи (см)' : 'Shoulders (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'chest_cm' as const, label: locale === 'ru' ? 'Грудь (см)' : 'Chest (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'biceps_cm' as const, label: locale === 'ru' ? 'Бицепс (см)' : 'Biceps (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'waist_cm' as const, label: locale === 'ru' ? 'Талия (см)' : 'Waist (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'sides_cm' as const, label: locale === 'ru' ? 'Бока (см)' : 'Sides (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'glutes_cm' as const, label: locale === 'ru' ? 'Ягодицы (см)' : 'Glutes (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+    { key: 'thighs_cm' as const, label: locale === 'ru' ? 'Бёдра (см)' : 'Thighs (cm)', unit: locale === 'ru' ? 'см' : 'cm' },
+  ], [locale]);
 
   if (isLoading) {
     return (
@@ -340,10 +378,17 @@ export default function HealthEntry() {
                     type="number"
                     step="0.1"
                     inputMode="decimal"
-                    placeholder="0"
+                    placeholder={previousEntry?.[field.key] !== null && previousEntry?.[field.key] !== undefined 
+                      ? `${previousEntry[field.key]}` 
+                      : "0"}
                     value={formData[field.key]}
                     onChange={(e) => handleInputChange(field.key, e.target.value)}
                     className="bg-background font-mono"
+                  />
+                  <PreviousValueHint
+                    previousValue={previousEntry?.[field.key]}
+                    currentValue={formData[field.key]}
+                    unit={field.unit}
                   />
                 </div>
               ))}
