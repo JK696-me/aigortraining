@@ -201,24 +201,27 @@ export default function TemplateEditor() {
           }
         }
 
-        // Create session exercise
+        // Create session exercise with active_set_index = 1
         const { data: newSe, error: seError } = await supabase
           .from('session_exercises')
           .insert({
             session_id: session.id,
             exercise_id: item.exercise_id,
+            sort_order: item.sort_order,
+            active_set_index: 1, // Always start from first set
           })
           .select()
           .single();
 
         if (seError) throw seError;
 
-        // Create sets based on target_sets
+        // Create sets based on target_sets with is_completed = false
         const sets = Array.from({ length: item.target_sets }, (_, i) => ({
           session_exercise_id: newSe.id,
           set_index: i + 1,
           weight: lastWeight,
           reps: lastReps,
+          is_completed: false, // Always start fresh
         }));
 
         await supabase.from('sets').insert(sets);
