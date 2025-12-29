@@ -334,6 +334,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          is_completed: boolean
           reps: number
           session_exercise_id: string
           set_index: number
@@ -342,6 +343,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          is_completed?: boolean
           reps: number
           session_exercise_id: string
           set_index: number
@@ -350,6 +352,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          is_completed?: boolean
           reps?: number
           session_exercise_id?: string
           set_index?: number
