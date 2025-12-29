@@ -31,10 +31,11 @@ export interface SyncOperation {
   status: OperationStatus
   last_error: string | null
   retries: number
-  // New fields for dependency tracking
+  next_retry_at?: number
   local_id?: string
   server_id?: string
   depends_on?: Dependency[]
+  local_updated_at?: number
 }
 
 export interface SyncState {
@@ -43,14 +44,19 @@ export interface SyncState {
   syncingCount: number
   failedCount: number
   lastSyncAt: number | null
+  hasConflict: boolean
+  conflictMessage?: string
 }
 
-// ID mapping structure: { "<entity>:<local_id>": "<server_id>" }
 export type IdMap = Record<string, string>
 
 const QUEUE_PREFIX = 'op_queue_'
 const ID_MAP_PREFIX = 'id_map_'
-const SYNC_TIMEOUT = 10000 // 10 seconds
+const SYNC_TIMEOUT = 10000
+
+// Exponential backoff delays in ms: 2s, 5s, 15s, 30s, 60s
+const RETRY_DELAYS = [2000, 5000, 15000, 30000, 60000]
+const MAX_RETRIES = 5
 
 // Entity sync order (topological)
 const ENTITY_SYNC_ORDER: EntityType[] = [
@@ -91,12 +97,14 @@ class OfflineSyncEngine {
   private listeners: Set<SyncListener> = new Set()
   private isSyncing = false
   private idMap: IdMap = {}
+  private retryTimeoutId: NodeJS.Timeout | null = null
   private state: SyncState = {
     isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
     pendingCount: 0,
     syncingCount: 0,
     failedCount: 0,
     lastSyncAt: null,
+    hasConflict: false,
   }
 
   constructor() {
@@ -211,7 +219,6 @@ class OfflineSyncEngine {
   async loadState(): Promise<void> {
     await this.loadIdMap()
     await this.updateState()
-    // Auto-sync on load if online
     if (this.state.isOnline && (this.state.pendingCount > 0 || this.state.failedCount > 0)) {
       this.processSyncQueue()
     }
@@ -226,17 +233,33 @@ class OfflineSyncEngine {
     return btoa(base).slice(0, 32)
   }
 
-  // Check if an operation has all dependencies resolved
+  // Generate dedup key for merging updates
+  private getDedupeKey(entity: EntityType, action: ActionType, payload: Record<string, unknown>): string | null {
+    if (action !== 'update') return null
+    
+    const id = payload.id as string
+    if (!id) return null
+
+    // Special handling for sets - dedupe by session_exercise_id + set_index
+    if (entity === 'sets') {
+      const sessionExerciseId = payload.session_exercise_id as string
+      const setIndex = payload.set_index as number
+      if (sessionExerciseId !== undefined && setIndex !== undefined) {
+        return `sets:${sessionExerciseId}:${setIndex}`
+      }
+    }
+
+    return `${entity}:${id}`
+  }
+
   private areDependenciesResolved(operation: SyncOperation): boolean {
     if (!operation.depends_on || operation.depends_on.length === 0) return true
-
     return operation.depends_on.every(dep => {
       const serverId = this.getServerId(dep.entity, dep.local_id)
       return !!serverId
     })
   }
 
-  // Rewrite foreign keys in payload using id_map
   private rewriteForeignKeys(entity: EntityType, payload: Record<string, unknown>): Record<string, unknown> {
     const mappings = FOREIGN_KEY_MAPPINGS[entity]
     if (!mappings || mappings.length === 0) return payload
@@ -250,7 +273,6 @@ class OfflineSyncEngine {
         if (serverId) {
           rewritten[mapping.field] = serverId
         }
-        // If no serverId found, keep local_id (might be a real server id already)
       }
     }
 
@@ -270,10 +292,16 @@ class OfflineSyncEngine {
     const opId = this.generateId()
     const idemKey = idempotencyKey || this.generateIdempotencyKey(entity, action, payload)
     const localId = options?.local_id || (payload.id as string) || this.generateId()
+    const localUpdatedAt = Date.now()
 
     // For create operations, ensure we have an id in payload for idempotency
     if (action === 'create' && !payload.id) {
       payload = { ...payload, id: localId }
+    }
+
+    // Add updated_at to payload for versioning
+    if (action === 'create' || action === 'update') {
+      payload = { ...payload, updated_at: new Date().toISOString() }
     }
 
     // If online and no dependencies (or all resolved), try to execute immediately
@@ -289,7 +317,6 @@ class OfflineSyncEngine {
           const result = await this.executeWithTimeout(entity, action, rewrittenPayload)
           
           if (result.success) {
-            // For create, store id mapping (local_id == server_id since we use deterministic id)
             if (action === 'create') {
               await this.setIdMapping(entity, localId, localId)
             }
@@ -298,18 +325,53 @@ class OfflineSyncEngine {
             return { success: true, synced: true, id: localId }
           }
           
-          // If it's a non-network error, don't queue
+          // Check for duplicate key error on create - treat as success
+          if (action === 'create' && result.error?.includes('duplicate key')) {
+            await this.setIdMapping(entity, localId, localId)
+            return { success: true, synced: true, id: localId }
+          }
+          
           if (result.error && !this.isNetworkError(result.error)) {
             return { success: false, synced: false, error: result.error }
           }
         } catch (error) {
-          // Network error or timeout - queue it
           console.log('Operation failed, queueing for later:', error)
         }
       }
     }
 
-    // Queue the operation
+    // Get queue and handle deduplication
+    const queue = await this.getQueue()
+    const dedupeKey = this.getDedupeKey(entity, action, payload)
+    
+    if (dedupeKey && action === 'update') {
+      // Find existing update operation for same entity+id
+      const existingIndex = queue.findIndex(op => {
+        if (op.action !== 'update' || op.entity !== entity) return false
+        const opDedupeKey = this.getDedupeKey(op.entity, op.action, op.payload)
+        return opDedupeKey === dedupeKey
+      })
+
+      if (existingIndex >= 0) {
+        // Merge payloads - keep last values
+        const existing = queue[existingIndex]
+        existing.payload = { ...existing.payload, ...payload }
+        existing.local_updated_at = localUpdatedAt
+        existing.created_at = Date.now() // Update timestamp to latest
+        existing.status = 'queued' // Reset status if it was failed
+        existing.last_error = null
+        await this.saveQueue(queue)
+        return { success: true, synced: false, id: localId }
+      }
+    }
+
+    // Check for duplicate idempotency key
+    const existingIndex = queue.findIndex(op => op.idempotency_key === idemKey)
+    if (existingIndex >= 0) {
+      return { success: true, synced: false, id: localId }
+    }
+
+    // Queue the new operation
     const operation: SyncOperation = {
       op_id: opId,
       created_at: Date.now(),
@@ -322,23 +384,13 @@ class OfflineSyncEngine {
       retries: 0,
       local_id: localId,
       depends_on: options?.depends_on,
-    }
-
-    const queue = await this.getQueue()
-    
-    // Check for duplicate idempotency key
-    const existingIndex = queue.findIndex(op => op.idempotency_key === idemKey)
-    if (existingIndex >= 0) {
-      // Already queued, return success
-      return { success: true, synced: false, id: localId }
+      local_updated_at: localUpdatedAt,
     }
 
     queue.push(operation)
     await this.saveQueue(queue)
 
-    // For create operations, pre-register the local_id mapping (will be updated on sync)
     if (action === 'create') {
-      // Local id maps to itself until synced
       await this.setIdMapping(entity, localId, localId)
     }
 
@@ -349,7 +401,7 @@ class OfflineSyncEngine {
     entity: EntityType,
     action: ActionType,
     payload: Record<string, unknown>
-  ): Promise<{ success: boolean; error?: string; serverId?: string }> {
+  ): Promise<{ success: boolean; error?: string; serverId?: string; serverUpdatedAt?: string }> {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), SYNC_TIMEOUT)
 
@@ -370,19 +422,24 @@ class OfflineSyncEngine {
     entity: EntityType,
     action: ActionType,
     payload: Record<string, unknown>
-  ): Promise<{ success: boolean; error?: string; serverId?: string }> {
+  ): Promise<{ success: boolean; error?: string; serverId?: string; serverUpdatedAt?: string }> {
     try {
       let result
       const table = supabase.from(entity)
 
       switch (action) {
         case 'create':
-          // Use upsert for idempotency - if record with this id exists, update it
-          result = await table.upsert(payload as never, { onConflict: 'id' }).select('id').single()
+          // First check if record already exists (idempotency)
+          const existingCheck = await table.select('id').eq('id', payload.id as string).maybeSingle()
+          if (existingCheck.data) {
+            // Record already exists - treat as success
+            return { success: true, serverId: payload.id as string }
+          }
+          result = await table.upsert(payload as never, { onConflict: 'id' }).select('id, updated_at').single()
           break
         case 'update':
           const { id, ...updateData } = payload
-          result = await table.update(updateData as never).eq('id', id as string).select('id').single()
+          result = await table.update(updateData as never).eq('id', id as string).select('id, updated_at').single()
           break
         case 'delete':
           result = await table.delete().eq('id', payload.id as string)
@@ -393,8 +450,12 @@ class OfflineSyncEngine {
         return { success: false, error: result.error.message }
       }
 
-      const serverId = (result.data as { id: string } | null)?.id || (payload.id as string)
-      return { success: true, serverId }
+      const data = result.data as { id: string; updated_at?: string } | null
+      return { 
+        success: true, 
+        serverId: data?.id || (payload.id as string),
+        serverUpdatedAt: data?.updated_at
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       return { success: false, error: message }
@@ -416,8 +477,18 @@ class OfflineSyncEngine {
     return networkErrorPatterns.some(pattern => lowerError.includes(pattern))
   }
 
+  private isConflictError(error: string): boolean {
+    const conflictPatterns = ['conflict', 'concurrent', 'modified', 'stale']
+    const lowerError = error.toLowerCase()
+    return conflictPatterns.some(pattern => lowerError.includes(pattern))
+  }
+
+  private getNextRetryDelay(retries: number): number {
+    const index = Math.min(retries, RETRY_DELAYS.length - 1)
+    return RETRY_DELAYS[index]
+  }
+
   private sortOperationsByDependency(operations: SyncOperation[]): SyncOperation[] {
-    // Sort by entity order first, then by created_at within same entity
     return [...operations].sort((a, b) => {
       const orderA = ENTITY_SYNC_ORDER.indexOf(a.entity)
       const orderB = ENTITY_SYNC_ORDER.indexOf(b.entity)
@@ -431,12 +502,19 @@ class OfflineSyncEngine {
 
     this.isSyncing = true
     let queue = await this.getQueue()
-    const toProcess = queue
-      .filter(op => op.status === 'queued' || op.status === 'failed')
+    const now = Date.now()
     
-    // Sort by dependency order
+    // Filter operations that are ready to process
+    const toProcess = queue.filter(op => {
+      if (op.status === 'synced' || op.status === 'syncing') return false
+      if (op.status === 'failed' && op.retries >= MAX_RETRIES) return false
+      if (op.next_retry_at && op.next_retry_at > now) return false
+      return op.status === 'queued' || op.status === 'failed'
+    })
+    
     const sorted = this.sortOperationsByDependency(toProcess)
     let madeProgress = true
+    let earliestRetry: number | null = null
 
     while (madeProgress && this.state.isOnline) {
       madeProgress = false
@@ -445,9 +523,7 @@ class OfflineSyncEngine {
         if (!this.state.isOnline) break
         if (operation.status === 'synced' || operation.status === 'syncing') continue
 
-        // Check dependencies
         if (!this.areDependenciesResolved(operation)) {
-          // Skip - dependencies not yet resolved
           continue
         }
 
@@ -459,9 +535,7 @@ class OfflineSyncEngine {
         await this.saveQueue(queue)
 
         try {
-          // Rewrite foreign keys before sending
           const rewrittenPayload = this.rewriteForeignKeys(operation.entity, operation.payload)
-          
           const result = await this.executeWithTimeout(
             operation.entity,
             operation.action,
@@ -478,7 +552,6 @@ class OfflineSyncEngine {
             }
             operation.status = 'synced'
             
-            // Store id mapping for creates
             if (operation.action === 'create' && operation.local_id && result.serverId) {
               await this.setIdMapping(operation.entity, operation.local_id, result.serverId)
             }
@@ -486,18 +559,27 @@ class OfflineSyncEngine {
             this.state.lastSyncAt = Date.now()
             madeProgress = true
           } else if (this.isNetworkError(result.error || '')) {
-            // Network error - stop processing
+            // Network error - stop processing, will retry on online
             if (updatedOp) updatedOp.status = 'queued'
             operation.status = 'queued'
             await this.saveQueue(queue)
             this.isSyncing = false
             return
+          } else if (this.isConflictError(result.error || '')) {
+            // Conflict - handle LWW
+            await this.handleConflict(operation, updatedOp, queue)
           } else {
-            // Non-network error - mark as failed
+            // Non-network error - mark as failed with retry
             if (updatedOp) {
               updatedOp.status = 'failed'
               updatedOp.last_error = result.error || 'Unknown error'
               updatedOp.retries++
+              if (updatedOp.retries < MAX_RETRIES) {
+                updatedOp.next_retry_at = Date.now() + this.getNextRetryDelay(updatedOp.retries)
+                if (!earliestRetry || updatedOp.next_retry_at < earliestRetry) {
+                  earliestRetry = updatedOp.next_retry_at
+                }
+              }
             }
             operation.status = 'failed'
           }
@@ -523,6 +605,63 @@ class OfflineSyncEngine {
 
     this.isSyncing = false
     this.notifyListeners()
+
+    // Schedule next retry if needed
+    if (earliestRetry && this.state.isOnline) {
+      const delay = Math.max(0, earliestRetry - Date.now())
+      this.scheduleRetry(delay)
+    }
+  }
+
+  private async handleConflict(
+    operation: SyncOperation,
+    queueOp: SyncOperation | undefined,
+    queue: SyncOperation[]
+  ): Promise<void> {
+    // LWW: Refetch server data and notify user
+    try {
+      const table = supabase.from(operation.entity)
+      const { data: serverData } = await table
+        .select('*')
+        .eq('id', operation.payload.id as string)
+        .single()
+
+      if (serverData) {
+        // Server has data - show conflict notification
+        this.state.hasConflict = true
+        this.state.conflictMessage = 'Данные обновлены с другого устройства'
+        this.notifyListeners()
+
+        // Mark operation as failed for user to decide
+        if (queueOp) {
+          queueOp.status = 'failed'
+          queueOp.last_error = 'Конфликт: данные были изменены на сервере'
+          queueOp.retries++
+        }
+        operation.status = 'failed'
+      }
+    } catch (error) {
+      console.error('Failed to handle conflict:', error)
+      if (queueOp) {
+        queueOp.status = 'failed'
+        queueOp.last_error = 'Ошибка обработки конфликта'
+      }
+    }
+  }
+
+  private scheduleRetry(delay: number) {
+    if (this.retryTimeoutId) {
+      clearTimeout(this.retryTimeoutId)
+    }
+    this.retryTimeoutId = setTimeout(() => {
+      this.processSyncQueue()
+    }, delay)
+  }
+
+  clearConflict() {
+    this.state.hasConflict = false
+    this.state.conflictMessage = undefined
+    this.notifyListeners()
   }
 
   async retryFailed(): Promise<void> {
@@ -532,11 +671,23 @@ class OfflineSyncEngine {
     for (const op of queue) {
       if (op.status === 'failed') {
         op.status = 'queued'
+        op.next_retry_at = undefined
         hasChanges = true
       }
     }
 
     if (hasChanges) {
+      await this.saveQueue(queue)
+      this.processSyncQueue()
+    }
+  }
+
+  async retryOperation(opId: string): Promise<void> {
+    const queue = await this.getQueue()
+    const op = queue.find(o => o.op_id === opId)
+    if (op && op.status === 'failed') {
+      op.status = 'queued'
+      op.next_retry_at = undefined
       await this.saveQueue(queue)
       this.processSyncQueue()
     }
@@ -548,15 +699,10 @@ class OfflineSyncEngine {
     await this.saveQueue(filtered)
   }
 
-  // Get sync status for a specific local_id
   getOperationStatus(entity: EntityType, localId: string): OperationStatus | 'synced' {
-    // If we have a server_id that's different from local_id, it's fully synced
     const serverId = this.getServerId(entity, localId)
     if (serverId && serverId !== localId) return 'synced'
-    
-    // Otherwise check the queue
-    // We need to check synchronously from cached state
-    return 'synced' // Default - actual check done async
+    return 'synced'
   }
 
   async getOperationStatusAsync(entity: EntityType, localId: string): Promise<OperationStatus | 'synced'> {
@@ -567,7 +713,6 @@ class OfflineSyncEngine {
     return operation?.status || 'synced'
   }
 
-  // Get all pending operations for an entity type
   async getPendingOperations(entity?: EntityType): Promise<SyncOperation[]> {
     const queue = await this.getQueue()
     const pending = queue.filter(op => op.status !== 'synced')
@@ -575,6 +720,15 @@ class OfflineSyncEngine {
       return pending.filter(op => op.entity === entity)
     }
     return pending
+  }
+
+  async getFailedOperations(): Promise<SyncOperation[]> {
+    const queue = await this.getQueue()
+    return queue.filter(op => op.status === 'failed')
+  }
+
+  async getAllOperations(): Promise<SyncOperation[]> {
+    return this.getQueue()
   }
 
   getState(): SyncState {

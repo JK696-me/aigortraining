@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Layout } from "@/components/Layout";
+import { SyncPanel } from "@/components/SyncPanel";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkout } from "@/contexts/WorkoutContext";
@@ -236,7 +237,15 @@ export default function Settings() {
                 </button>
               </div>
             </div>
-          </Card>
+        </Card>
+        </div>
+
+        {/* Sync Section */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-muted-foreground mb-3 px-1">
+            Синхронизация
+          </h3>
+          <SyncPanel />
         </div>
 
         {/* Preferences Section */}
