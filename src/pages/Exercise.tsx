@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Minus, ChevronLeft, History, Lightbulb, Check, Copy, Grid } from "lucide-react";
+import { Plus, Minus, ChevronLeft, History, Lightbulb, Check, Copy, Grid, CheckCircle } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +32,7 @@ interface SessionExerciseData {
   session_id: string;
   exercise_id: string;
   rpe: number | null;
+  active_set_index: number | null;
   exercise: {
     id: string;
     name: string;
@@ -39,6 +41,11 @@ interface SessionExerciseData {
     increment_value: number;
   };
 }
+
+interface ExerciseStateData {
+  current_sets: number;
+}
+
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -69,6 +76,9 @@ export default function Exercise() {
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [exerciseStateData, setExerciseStateData] = useState<ExerciseStateData | null>(null);
+  const [showLastSetDialog, setShowLastSetDialog] = useState(false);
+  const [initialSetIndexDetermined, setInitialSetIndexDetermined] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   
   // Preview state
@@ -169,6 +179,21 @@ export default function Exercise() {
         setSessionExercise(data as SessionExerciseData);
         setCurrentRpe(data.rpe);
         
+        // Load exercise_state for current_sets count
+        const exerciseId = (data.exercise as { id: string })?.id;
+        if (exerciseId) {
+          const { data: stateData } = await supabase
+            .from('exercise_state')
+            .select('current_sets')
+            .eq('exercise_id', exerciseId)
+            .eq('user_id', user.id)
+            .maybeSingle();
+          
+          if (stateData) {
+            setExerciseStateData(stateData as ExerciseStateData);
+          }
+        }
+        
         // Load template name if from template
         const session = data.session as { id: string; template_id: string | null; source: string } | null;
         if (session?.template_id) {
@@ -183,7 +208,6 @@ export default function Exercise() {
         }
         
         // Load last completed session date for this exercise
-        const exerciseId = (data.exercise as { id: string })?.id;
         if (exerciseId) {
           const { data: lastSession } = await supabase
             .from('session_exercises')
@@ -207,6 +231,55 @@ export default function Exercise() {
     
     loadData();
   }, [sessionExerciseId, user]);
+
+  // Determine initial set index based on active_set_index or first incomplete working set
+  useEffect(() => {
+    if (!sessionExercise || !exerciseStateData || sets.length === 0 || initialSetIndexDetermined) return;
+    
+    const currentSets = exerciseStateData.current_sets;
+    const savedActiveIndex = sessionExercise.active_set_index;
+    
+    // A) If active_set_index is saved and valid
+    if (savedActiveIndex !== null) {
+      const matchingSetIdx = sets.findIndex(s => s.set_index === savedActiveIndex);
+      if (matchingSetIdx !== -1) {
+        setSelectedSetIndex(matchingSetIdx);
+        setInitialSetIndexDetermined(true);
+        return;
+      }
+    }
+    
+    // B) Find first incomplete working set (set_index 1..currentSets)
+    const workingSets = sets.filter(s => s.set_index >= 1 && s.set_index <= currentSets);
+    const firstIncomplete = workingSets.find(s => 
+      s.is_completed !== true && (s.reps === 0 || s.weight === 0)
+    );
+    
+    if (firstIncomplete) {
+      const idx = sets.findIndex(s => s.id === firstIncomplete.id);
+      if (idx !== -1) {
+        setSelectedSetIndex(idx);
+        setInitialSetIndexDetermined(true);
+        return;
+      }
+    }
+    
+    // C) All working sets complete - open last working set
+    const lastWorkingSet = workingSets[workingSets.length - 1];
+    if (lastWorkingSet) {
+      const idx = sets.findIndex(s => s.id === lastWorkingSet.id);
+      if (idx !== -1) {
+        setSelectedSetIndex(idx);
+      }
+    }
+    
+    setInitialSetIndexDetermined(true);
+  }, [sessionExercise, exerciseStateData, sets, initialSetIndexDetermined]);
+
+  // Reset initial set determination when switching exercises
+  useEffect(() => {
+    setInitialSetIndexDetermined(false);
+  }, [sessionExerciseId]);
 
   // Load preview on trigger change (debounced)
   useEffect(() => {
@@ -388,6 +461,16 @@ export default function Exercise() {
     handleWeightChange(incrementValue);
   };
 
+  // Save active_set_index to DB
+  const saveActiveSetIndex = useCallback(async (setIndex: number) => {
+    if (!sessionExerciseId) return;
+    
+    await supabase
+      .from('session_exercises')
+      .update({ active_set_index: setIndex })
+      .eq('id', sessionExerciseId);
+  }, [sessionExerciseId]);
+
   const handleSetSelect = (index: number) => {
     // Save current values before switching
     if (currentSet) {
@@ -395,6 +478,81 @@ export default function Exercise() {
       saveReps(repsValue, false);
     }
     setSelectedSetIndex(index);
+    
+    // Save active set index to DB
+    const setIndexValue = sets[index]?.set_index;
+    if (setIndexValue) {
+      saveActiveSetIndex(setIndexValue);
+    }
+  };
+
+  // Handle "Set Completed" button
+  const handleSetCompleted = async () => {
+    if (!currentSet || !sessionExerciseId || !exerciseStateData) return;
+    
+    const weight = parseFloat(weightValue) || 0;
+    const reps = parseInt(repsValue, 10) || 0;
+    
+    // Validation
+    if (weight <= 0 || reps <= 0) {
+      toast.error(locale === 'ru' ? 'Введите вес и повторы' : 'Enter weight and reps');
+      return;
+    }
+    
+    // Mark current set as completed
+    updateSet({ setId: currentSet.id, updates: { weight, reps, is_completed: true } });
+    
+    const currentSetsCount = exerciseStateData.current_sets;
+    const currentSetIndex = currentSet.set_index;
+    
+    // Find next working set
+    const nextWorkingSet = sets.find(s => 
+      s.set_index > currentSetIndex && s.set_index <= currentSetsCount
+    );
+    
+    if (nextWorkingSet) {
+      // Move to next working set
+      const nextIdx = sets.findIndex(s => s.id === nextWorkingSet.id);
+      setSelectedSetIndex(nextIdx);
+      saveActiveSetIndex(nextWorkingSet.set_index);
+      
+      // Auto-focus on reps after a short delay
+      setTimeout(() => {
+        repsInputRef.current?.focus();
+        repsInputRef.current?.select();
+      }, 100);
+    } else {
+      // This was the last working set - show dialog
+      setShowLastSetDialog(true);
+    }
+    
+    triggerPreviewUpdate();
+  };
+
+  // Handle adding extra set from dialog
+  const handleAddExtraSet = () => {
+    setShowLastSetDialog(false);
+    
+    const lastSet = sets[sets.length - 1];
+    addSet({
+      weight: lastSet?.weight || 0,
+      reps: lastSet?.reps || 8,
+    });
+    
+    // Switch to new set after a short delay
+    setTimeout(() => {
+      const newSetIndex = sets.length;
+      setSelectedSetIndex(newSetIndex);
+      const newSetIndexValue = (sets[sets.length - 1]?.set_index || 0) + 1;
+      saveActiveSetIndex(newSetIndexValue);
+      repsInputRef.current?.focus();
+    }, 150);
+  };
+
+  // Handle finishing exercise from dialog
+  const handleFinishFromDialog = () => {
+    setShowLastSetDialog(false);
+    handleFinishExercise();
   };
 
   // Apply recommendation to DB
@@ -593,12 +751,17 @@ export default function Exercise() {
             <button
               key={set.id}
               onClick={() => handleSetSelect(index)}
-              className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors ${
+              className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors relative ${
                 index === selectedSetIndex
                   ? 'bg-primary text-primary-foreground'
+                  : set.is_completed
+                  ? 'bg-accent/20 text-accent'
                   : 'bg-secondary text-muted-foreground'
               }`}
             >
+              {set.is_completed && (
+                <CheckCircle className="h-3 w-3 absolute -top-1 -right-1 text-accent" />
+              )}
               {index + 1}
             </button>
           ))}
@@ -706,6 +869,16 @@ export default function Exercise() {
             </div>
           </Card>
         )}
+
+        {/* Set Completed Button */}
+        <Button
+          onClick={handleSetCompleted}
+          className="w-full h-14 text-base font-semibold bg-accent hover:bg-accent/90 text-accent-foreground mb-4"
+          size="lg"
+        >
+          <CheckCircle className="h-5 w-5 mr-2" />
+          {locale === 'ru' ? 'Подход выполнен' : 'Set Completed'}
+        </Button>
 
         {/* Quick Actions */}
         <div className="grid grid-cols-2 gap-3 mb-4">
@@ -862,6 +1035,35 @@ export default function Exercise() {
           {isFinishing ? t('calculating') : t('finishExercise')}
         </Button>
       </div>
+
+      {/* Last Set Dialog */}
+      <AlertDialog open={showLastSetDialog} onOpenChange={setShowLastSetDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {locale === 'ru' ? 'Последний рабочий подход выполнен' : 'Last working set completed'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {locale === 'ru' 
+                ? 'Закончить упражнение или добавить дополнительный подход?' 
+                : 'Finish the exercise or add an extra set?'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={() => setShowLastSetDialog(false)}>
+              {locale === 'ru' ? 'Отмена' : 'Cancel'}
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleAddExtraSet} className="bg-secondary text-secondary-foreground hover:bg-secondary/80">
+              <Plus className="h-4 w-4 mr-2" />
+              {locale === 'ru' ? 'Добавить подход' : 'Add Set'}
+            </AlertDialogAction>
+            <AlertDialogAction onClick={handleFinishFromDialog}>
+              <Check className="h-4 w-4 mr-2" />
+              {locale === 'ru' ? 'Закончить' : 'Finish'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

@@ -35,6 +35,7 @@ export interface Set {
   set_index: number;
   weight: number;
   reps: number;
+  is_completed: boolean;
   created_at: string;
 }
 
@@ -342,7 +343,7 @@ export function useSets(sessionExerciseId: string | null) {
   });
 
   const updateSet = useMutation({
-    mutationFn: async ({ setId, updates }: { setId: string; updates: Partial<Pick<Set, 'weight' | 'reps'>> }) => {
+    mutationFn: async ({ setId, updates }: { setId: string; updates: Partial<Pick<Set, 'weight' | 'reps' | 'is_completed'>> }) => {
       const { error } = await supabase
         .from('sets')
         .update(updates)
