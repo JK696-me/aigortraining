@@ -12,6 +12,8 @@ import { toast } from "sonner";
 import { useWorkout } from "@/contexts/WorkoutContext";
 import { seedExercisesForUser } from "@/lib/seedExercises";
 import { useQueryClient } from "@tanstack/react-query";
+import { OnboardingWidget } from "@/components/OnboardingWidget";
+import { CoachMark } from "@/components/CoachMark";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -233,6 +235,9 @@ export default function Home() {
           <p className="text-muted-foreground">{t('readyToTrain')}</p>
         </div>
 
+        {/* Onboarding Widget */}
+        <OnboardingWidget />
+
         {/* Continue Active Workout Button */}
         {hasActiveDraft && activeSessionId && (
           <Card className="p-4 mb-6 bg-primary/10 border-primary/30">
@@ -257,21 +262,27 @@ export default function Home() {
 
         {/* Main Actions */}
         <div className="space-y-3 mb-8">
-          <Button
-            onClick={handleStartWorkout}
-            disabled={isStarting}
-            className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground animate-pulse-glow"
-            size="lg"
+          <CoachMark 
+            id="home-start-workout" 
+            message={locale === 'ru' ? 'Нажмите, чтобы начать тренировку' : 'Click to start your workout'}
+            position="bottom"
           >
-            {isStarting ? (
-              <Loader2 className="h-6 w-6 mr-3 animate-spin" />
-            ) : (
-              <Play className="h-6 w-6 mr-3" />
-            )}
-            {hasActiveDraft 
-              ? (locale === 'ru' ? 'Продолжить тренировку' : 'Continue Workout')
-              : t('startWorkout')}
-          </Button>
+            <Button
+              onClick={handleStartWorkout}
+              disabled={isStarting}
+              className="w-full h-16 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground animate-pulse-glow"
+              size="lg"
+            >
+              {isStarting ? (
+                <Loader2 className="h-6 w-6 mr-3 animate-spin" />
+              ) : (
+                <Play className="h-6 w-6 mr-3" />
+              )}
+              {hasActiveDraft 
+                ? (locale === 'ru' ? 'Продолжить тренировку' : 'Continue Workout')
+                : t('startWorkout')}
+            </Button>
+          </CoachMark>
 
           <Button
             onClick={handleRepeatLastWorkout}
