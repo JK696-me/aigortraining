@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Layout } from "@/components/Layout";
+import { HealthProgressChart } from "@/components/health/HealthProgressChart";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -148,6 +149,9 @@ export default function Health() {
             {locale === 'ru' ? 'Вес, объёмы, InBody' : 'Weight, measurements, InBody'}
           </p>
         </div>
+
+        {/* Progress Chart */}
+        <HealthProgressChart />
 
         {/* Add button */}
         <Button

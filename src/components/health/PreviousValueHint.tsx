@@ -11,10 +11,11 @@ export function PreviousValueHint({ previousValue, currentValue, unit }: Previou
   const t = translations[locale]
 
   const currentNum = currentValue ? parseFloat(currentValue) : null
-  
-  const delta = previousValue !== null && previousValue !== undefined && currentNum !== null
-    ? currentNum - previousValue
-    : null
+
+  const delta =
+    previousValue !== null && previousValue !== undefined && currentNum !== null
+      ? currentNum - previousValue
+      : null
 
   const formatDelta = (d: number) => {
     const sign = d > 0 ? "+" : ""
