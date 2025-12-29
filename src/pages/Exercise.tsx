@@ -239,8 +239,8 @@ export default function Exercise() {
     const currentSets = exerciseStateData.current_sets;
     const savedActiveIndex = sessionExercise.active_set_index;
     
-    // A) If active_set_index is saved and valid
-    if (savedActiveIndex !== null) {
+    // A) If active_set_index is saved and valid, use it
+    if (savedActiveIndex !== null && savedActiveIndex >= 1) {
       const matchingSetIdx = sets.findIndex(s => s.set_index === savedActiveIndex);
       if (matchingSetIdx !== -1) {
         setSelectedSetIndex(matchingSetIdx);
@@ -250,10 +250,9 @@ export default function Exercise() {
     }
     
     // B) Find first incomplete working set (set_index 1..currentSets)
+    // Incomplete = is_completed === false
     const workingSets = sets.filter(s => s.set_index >= 1 && s.set_index <= currentSets);
-    const firstIncomplete = workingSets.find(s => 
-      s.is_completed !== true && (s.reps === 0 || s.weight === 0)
-    );
+    const firstIncomplete = workingSets.find(s => s.is_completed !== true);
     
     if (firstIncomplete) {
       const idx = sets.findIndex(s => s.id === firstIncomplete.id);

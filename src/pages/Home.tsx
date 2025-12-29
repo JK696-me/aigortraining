@@ -156,12 +156,16 @@ export default function Home() {
         .select('*')
         .eq('session_id', lastSession.id);
 
+      let sortOrder = 0;
       for (const se of lastExercises || []) {
+        sortOrder++;
         const { data: newSe } = await supabase
           .from('session_exercises')
           .insert({
             session_id: newSession.id,
             exercise_id: se.exercise_id,
+            sort_order: sortOrder,
+            active_set_index: 1, // Always start from first set
           })
           .select()
           .single();
@@ -180,6 +184,7 @@ export default function Home() {
             set_index: s.set_index,
             weight: s.weight,
             reps: s.reps,
+            is_completed: false, // Always start fresh
           }));
 
           await supabase.from('sets').insert(newSets);
