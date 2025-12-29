@@ -9,6 +9,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { WorkoutProvider } from "@/contexts/WorkoutContext";
 import { CacheProvider } from "@/contexts/CacheContext";
+import { SyncProvider } from "@/contexts/SyncContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { createQueryClient, createIDBPersister } from "@/lib/queryClient";
 import Home from "./pages/Home";
@@ -43,9 +44,10 @@ const App = () => (
   >
     <LanguageProvider>
       <AuthProvider>
-        <CacheProvider queryClient={queryClient}>
-          <WorkoutProvider>
-            <TooltipProvider>
+        <SyncProvider>
+          <CacheProvider queryClient={queryClient}>
+            <WorkoutProvider>
+              <TooltipProvider>
               <Toaster />
               <Sonner />
               <BrowserRouter>
@@ -69,8 +71,9 @@ const App = () => (
             </TooltipProvider>
           </WorkoutProvider>
         </CacheProvider>
-      </AuthProvider>
-    </LanguageProvider>
+      </SyncProvider>
+    </AuthProvider>
+  </LanguageProvider>
   </PersistQueryClientProvider>
 );
 
