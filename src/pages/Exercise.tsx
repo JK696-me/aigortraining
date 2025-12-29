@@ -73,13 +73,16 @@ export default function Exercise() {
   const { activeSessionId } = useWorkout();
   
   const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
-  const [selectedSetIndex, setSelectedSetIndex] = useState(0);
+  const [selectedSetIndex, setSelectedSetIndex] = useState<number | null>(null); // null = not resolved yet
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [exerciseStateData, setExerciseStateData] = useState<ExerciseStateData | null>(null);
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
-  const [initialSetIndexDetermined, setInitialSetIndexDetermined] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  
+  // Anti-flicker: loading state and switch token
+  const [isSwitchingExercise, setIsSwitchingExercise] = useState(true);
+  const switchTokenRef = useRef(0);
   
   // Preview state
   const [preview, setPreview] = useState<ProgressionPreview | null>(null);
@@ -160,12 +163,23 @@ export default function Exercise() {
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
-  // Load session exercise data and additional context
+
+  // Atomic resolution of active set index with race condition protection
   useEffect(() => {
     if (!sessionExerciseId || !user) return;
     
-    const loadData = async () => {
-      const { data } = await supabase
+    // Increment token to cancel previous requests
+    const currentToken = ++switchTokenRef.current;
+    
+    // Reset state for new exercise
+    setIsSwitchingExercise(true);
+    setSelectedSetIndex(null);
+    setSessionExercise(null);
+    setExerciseStateData(null);
+    
+    const resolveActiveSetIndex = async () => {
+      // Fetch session exercise data
+      const { data: seData } = await supabase
         .from('session_exercises')
         .select(`
           *,
@@ -175,110 +189,123 @@ export default function Exercise() {
         .eq('id', sessionExerciseId)
         .single();
       
-      if (data) {
-        setSessionExercise(data as SessionExerciseData);
-        setCurrentRpe(data.rpe);
+      // Check if this request is still valid
+      if (switchTokenRef.current !== currentToken) return;
+      
+      if (!seData) {
+        setIsSwitchingExercise(false);
+        return;
+      }
+      
+      setSessionExercise(seData as SessionExerciseData);
+      setCurrentRpe(seData.rpe);
+      
+      // Fetch exercise state for current_sets
+      const exerciseId = (seData.exercise as { id: string })?.id;
+      let currentSetsCount = 3; // default
+      
+      if (exerciseId) {
+        const { data: stateData } = await supabase
+          .from('exercise_state')
+          .select('current_sets')
+          .eq('exercise_id', exerciseId)
+          .eq('user_id', user.id)
+          .maybeSingle();
         
-        // Load exercise_state for current_sets count
-        const exerciseId = (data.exercise as { id: string })?.id;
-        if (exerciseId) {
-          const { data: stateData } = await supabase
-            .from('exercise_state')
-            .select('current_sets')
-            .eq('exercise_id', exerciseId)
-            .eq('user_id', user.id)
-            .maybeSingle();
-          
-          if (stateData) {
-            setExerciseStateData(stateData as ExerciseStateData);
+        if (switchTokenRef.current !== currentToken) return;
+        
+        if (stateData) {
+          setExerciseStateData(stateData as ExerciseStateData);
+          currentSetsCount = stateData.current_sets;
+        }
+      }
+      
+      // Fetch sets for this session exercise
+      const { data: setsData } = await supabase
+        .from('sets')
+        .select('*')
+        .eq('session_exercise_id', sessionExerciseId)
+        .order('set_index');
+      
+      if (switchTokenRef.current !== currentToken) return;
+      
+      if (!setsData || setsData.length === 0) {
+        setSelectedSetIndex(0);
+        setIsSwitchingExercise(false);
+        return;
+      }
+      
+      // Resolve active set index
+      const savedActiveIndex = seData.active_set_index;
+      let resolvedIndex = 0;
+      
+      // A) If active_set_index is saved and valid
+      if (savedActiveIndex !== null && savedActiveIndex >= 1) {
+        const matchingSetIdx = setsData.findIndex(s => s.set_index === savedActiveIndex);
+        if (matchingSetIdx !== -1) {
+          resolvedIndex = matchingSetIdx;
+        }
+      } else {
+        // B) Find first incomplete working set
+        const workingSets = setsData.filter(s => s.set_index >= 1 && s.set_index <= currentSetsCount);
+        const firstIncomplete = workingSets.find(s => s.is_completed !== true);
+        
+        if (firstIncomplete) {
+          const idx = setsData.findIndex(s => s.id === firstIncomplete.id);
+          if (idx !== -1) {
+            resolvedIndex = idx;
+          }
+        } else {
+          // C) All working sets complete - open last working set
+          const lastWorkingSet = workingSets[workingSets.length - 1];
+          if (lastWorkingSet) {
+            const idx = setsData.findIndex(s => s.id === lastWorkingSet.id);
+            if (idx !== -1) {
+              resolvedIndex = idx;
+            }
           }
         }
-        
-        // Load template name if from template
-        const session = data.session as { id: string; template_id: string | null; source: string } | null;
-        if (session?.template_id) {
-          const { data: templateData } = await supabase
-            .from('workout_templates')
-            .select('name')
-            .eq('id', session.template_id)
-            .maybeSingle();
-          if (templateData) {
-            setTemplateName(templateData.name);
-          }
+      }
+      
+      // Final check before applying
+      if (switchTokenRef.current !== currentToken) return;
+      
+      setSelectedSetIndex(resolvedIndex);
+      setIsSwitchingExercise(false);
+      
+      // Load additional context (template name, last completed date) in background
+      const session = seData.session as { id: string; template_id: string | null; source: string } | null;
+      if (session?.template_id) {
+        const { data: templateData } = await supabase
+          .from('workout_templates')
+          .select('name')
+          .eq('id', session.template_id)
+          .maybeSingle();
+        if (templateData && switchTokenRef.current === currentToken) {
+          setTemplateName(templateData.name);
         }
+      }
+      
+      if (exerciseId) {
+        const { data: lastSession } = await supabase
+          .from('session_exercises')
+          .select(`sessions!inner(completed_at, status)`)
+          .eq('exercise_id', exerciseId)
+          .eq('sessions.status', 'completed')
+          .eq('sessions.user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
         
-        // Load last completed session date for this exercise
-        if (exerciseId) {
-          const { data: lastSession } = await supabase
-            .from('session_exercises')
-            .select(`
-              sessions!inner(completed_at, status)
-            `)
-            .eq('exercise_id', exerciseId)
-            .eq('sessions.status', 'completed')
-            .eq('sessions.user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          
-          if (lastSession) {
-            const sessionData = lastSession.sessions as { completed_at: string; status: string };
-            setLastCompletedDate(sessionData.completed_at);
-          }
+        if (lastSession && switchTokenRef.current === currentToken) {
+          const sessionData = lastSession.sessions as { completed_at: string; status: string };
+          setLastCompletedDate(sessionData.completed_at);
         }
       }
     };
     
-    loadData();
+    resolveActiveSetIndex();
   }, [sessionExerciseId, user]);
-
-  // Determine initial set index based on active_set_index or first incomplete working set
-  useEffect(() => {
-    if (!sessionExercise || !exerciseStateData || sets.length === 0 || initialSetIndexDetermined) return;
-    
-    const currentSets = exerciseStateData.current_sets;
-    const savedActiveIndex = sessionExercise.active_set_index;
-    
-    // A) If active_set_index is saved and valid, use it
-    if (savedActiveIndex !== null && savedActiveIndex >= 1) {
-      const matchingSetIdx = sets.findIndex(s => s.set_index === savedActiveIndex);
-      if (matchingSetIdx !== -1) {
-        setSelectedSetIndex(matchingSetIdx);
-        setInitialSetIndexDetermined(true);
-        return;
-      }
-    }
-    
-    // B) Find first incomplete working set (set_index 1..currentSets)
-    // Incomplete = is_completed === false
-    const workingSets = sets.filter(s => s.set_index >= 1 && s.set_index <= currentSets);
-    const firstIncomplete = workingSets.find(s => s.is_completed !== true);
-    
-    if (firstIncomplete) {
-      const idx = sets.findIndex(s => s.id === firstIncomplete.id);
-      if (idx !== -1) {
-        setSelectedSetIndex(idx);
-        setInitialSetIndexDetermined(true);
-        return;
-      }
-    }
-    
-    // C) All working sets complete - open last working set
-    const lastWorkingSet = workingSets[workingSets.length - 1];
-    if (lastWorkingSet) {
-      const idx = sets.findIndex(s => s.id === lastWorkingSet.id);
-      if (idx !== -1) {
-        setSelectedSetIndex(idx);
-      }
-    }
-    
-    setInitialSetIndexDetermined(true);
-  }, [sessionExercise, exerciseStateData, sets, initialSetIndexDetermined]);
-
-  // Reset initial set determination when switching exercises
-  useEffect(() => {
-    setInitialSetIndexDetermined(false);
-  }, [sessionExerciseId]);
 
   // Load preview on trigger change (debounced)
   useEffect(() => {
@@ -312,7 +339,7 @@ export default function Exercise() {
   }, []);
 
   // Update local values when set changes
-  const currentSet = sets[selectedSetIndex];
+  const currentSet = selectedSetIndex !== null ? sets[selectedSetIndex] : undefined;
   
   useEffect(() => {
     if (currentSet) {
@@ -376,9 +403,8 @@ export default function Exercise() {
       setExerciseProgress(prev => ({ ...prev, [sessionExerciseId]: hasSetsValue }));
     }
     
-    // Navigate to new exercise
+    // Navigate to new exercise - don't set selectedSetIndex here, let the atomic effect handle it
     setSearchParams({ se: newSessionExerciseId });
-    setSelectedSetIndex(0);
   }, [sessionExerciseId, sets, setSearchParams]);
 
   const handlePrevExercise = useCallback(() => {
@@ -726,7 +752,9 @@ export default function Exercise() {
             </Button>
           </div>
           <p className="text-muted-foreground">
-            {t('setOf')} {selectedSetIndex + 1} {t('of')} {sets.length}
+            {selectedSetIndex !== null 
+              ? `${t('setOf')} ${selectedSetIndex + 1} ${t('of')} ${sets.length}`
+              : `${sets.length} ${locale === 'ru' ? 'подходов' : 'sets'}`}
           </p>
         </div>
 
@@ -744,36 +772,68 @@ export default function Exercise() {
           />
         )}
 
-        {/* Set Tabs */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-          {sets.map((set, index) => (
+        {/* Set Tabs - with skeleton during switching */}
+        {isSwitchingExercise ? (
+          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="flex-shrink-0 w-10 h-10 rounded-lg bg-secondary animate-pulse"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+            {sets.map((set, index) => (
+              <button
+                key={`set-${set.set_index}`}
+                onClick={() => handleSetSelect(index)}
+                className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors relative ${
+                  index === selectedSetIndex
+                    ? 'bg-primary text-primary-foreground'
+                    : set.is_completed
+                    ? 'bg-accent/20 text-accent'
+                    : 'bg-secondary text-muted-foreground'
+                }`}
+              >
+                {set.is_completed && (
+                  <CheckCircle className="h-3 w-3 absolute -top-1 -right-1 text-accent" />
+                )}
+                {set.set_index}
+              </button>
+            ))}
             <button
-              key={set.id}
-              onClick={() => handleSetSelect(index)}
-              className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors relative ${
-                index === selectedSetIndex
-                  ? 'bg-primary text-primary-foreground'
-                  : set.is_completed
-                  ? 'bg-accent/20 text-accent'
-                  : 'bg-secondary text-muted-foreground'
-              }`}
+              onClick={handleAddSet}
+              className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
             >
-              {set.is_completed && (
-                <CheckCircle className="h-3 w-3 absolute -top-1 -right-1 text-accent" />
-              )}
-              {index + 1}
+              <Plus className="h-5 w-5" />
             </button>
-          ))}
-          <button
-            onClick={handleAddSet}
-            className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
-        </div>
+          </div>
+        )}
 
         {/* Current Set Input */}
-        {currentSet && (
+        {isSwitchingExercise ? (
+          <Card className="p-6 bg-card border-border mb-6">
+            <div className="grid grid-cols-2 gap-6 mb-6">
+              <div className="text-center">
+                <div className="h-4 w-16 bg-secondary rounded animate-pulse mx-auto mb-2" />
+                <div className="flex items-center justify-center gap-2">
+                  <div className="h-12 w-12 rounded-full bg-secondary animate-pulse" />
+                  <div className="w-20 h-14 bg-secondary rounded animate-pulse" />
+                  <div className="h-12 w-12 rounded-full bg-secondary animate-pulse" />
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="h-4 w-16 bg-secondary rounded animate-pulse mx-auto mb-2" />
+                <div className="flex items-center justify-center gap-2">
+                  <div className="h-12 w-12 rounded-full bg-secondary animate-pulse" />
+                  <div className="w-20 h-14 bg-secondary rounded animate-pulse" />
+                  <div className="h-12 w-12 rounded-full bg-secondary animate-pulse" />
+                </div>
+              </div>
+            </div>
+          </Card>
+        ) : currentSet && (
           <Card className="p-6 bg-card border-border mb-6">
             <div className="grid grid-cols-2 gap-6 mb-6">
               {/* Weight */}
