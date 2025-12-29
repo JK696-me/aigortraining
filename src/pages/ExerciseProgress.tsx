@@ -8,6 +8,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkout } from "@/contexts/WorkoutContext";
 import { supabase } from "@/integrations/supabase/client";
+import { useOnboardingState } from "@/hooks/useOnboardingState";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
 import {
@@ -67,6 +68,7 @@ export default function ExerciseProgress() {
   const { t, locale } = useLanguage();
   const { user } = useAuth();
   const { hasActiveDraft, activeSessionId } = useWorkout();
+  const { markProgressViewed } = useOnboardingState();
   
   const [exercise, setExercise] = useState<ExerciseInfo | null>(null);
   const [exerciseState, setExerciseState] = useState<ExerciseState | null>(null);
@@ -74,6 +76,13 @@ export default function ExerciseProgress() {
   const [isLoading, setIsLoading] = useState(true);
   const [showMore, setShowMore] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null);
+
+  // Mark progress step as viewed
+  useEffect(() => {
+    if (exerciseId) {
+      markProgressViewed();
+    }
+  }, [exerciseId, markProgressViewed]);
 
   // Load all data
   useEffect(() => {
