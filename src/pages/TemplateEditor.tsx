@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Trash2, Dumbbell, Loader2, Play } from "lucide-react";
+import { useSearchParams } from 'react-router-dom';
+import { ChevronLeft, Plus, Trash2, Dumbbell, Loader2, Play, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,29 +16,28 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useTemplate, useTemplateItems, useTemplates, TemplateItem } from "@/hooks/useTemplates";
+import { useTemplateWorkoutStart } from "@/hooks/useTemplateWorkoutStart";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { Exercise } from "@/hooks/useExercises";
-import { useAuth } from "@/contexts/AuthContext";
-import { useWorkout } from "@/contexts/WorkoutContext";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
+
+import { useNavigate } from 'react-router-dom';
 
 export default function TemplateEditor() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const templateId = searchParams.get('id');
-  const { user } = useAuth();
   
   const { data: template, isLoading: isLoadingTemplate } = useTemplate(templateId);
   const { items, isLoading: isLoadingItems, addItem, updateItem, deleteItem, reorderItems, isAdding } = useTemplateItems(templateId);
   const { updateTemplate, deleteTemplate, isDeleting } = useTemplates();
-  const { setActiveSession, hasActiveDraft, clearDraft, activeSessionId } = useWorkout();
+  const { isStarting, progress, slowConnection, startWorkout } = useTemplateWorkoutStart();
   
   const [templateName, setTemplateName] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
 
   useEffect(() => {
     if (template) {
@@ -107,137 +106,9 @@ export default function TemplateEditor() {
     }
   };
 
-  const handleStartWorkout = async () => {
-    if (!templateId || !user || items.length === 0) {
-      toast.error('Добавьте упражнения в шаблон');
-      return;
-    }
-
-    // If there's an active draft, warn user
-    if (hasActiveDraft) {
-      const confirmed = window.confirm(
-        'У вас есть незавершённая тренировка. Создать новую?'
-      );
-      if (!confirmed) return;
-      await clearDraft();
-      if (activeSessionId) {
-        await supabase.from('sessions').delete().eq('id', activeSessionId);
-      }
-    }
-
-    setIsStarting(true);
-    try {
-      // DEDUPLICATION: Check for any remaining draft sessions
-      const { data: existingDraft } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('status', 'draft')
-        .limit(1)
-        .maybeSingle();
-
-      if (existingDraft) {
-        // Delete orphaned draft
-        await supabase.from('sessions').delete().eq('id', existingDraft.id);
-      }
-
-      // Create template snapshot for later comparison
-      const templateSnapshot = items.map(item => ({
-        exercise_id: item.exercise_id,
-        target_sets: item.target_sets,
-        sort_order: item.sort_order,
-      }));
-
-      // Create session from template
-      const now = new Date().toISOString();
-      const { data: session, error: sessionError } = await supabase
-        .from('sessions')
-        .insert({
-          user_id: user.id,
-          date: now,
-          source: 'template',
-          template_id: templateId,
-          template_snapshot: templateSnapshot,
-          status: 'draft',
-          started_at: now,
-          timer_last_started_at: now,
-          elapsed_seconds: 0,
-          timer_running: true,
-        })
-        .select()
-        .single();
-
-      if (sessionError) throw sessionError;
-
-      // Create session exercises from template items
-      for (const item of items) {
-        // Get last completed session's sets for this exercise
-        const { data: lastSessionExercise } = await supabase
-          .from('session_exercises')
-          .select(`
-            id,
-            session:sessions!inner(status)
-          `)
-          .eq('exercise_id', item.exercise_id)
-          .eq('sessions.status', 'completed')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        let lastWeight = 0;
-        let lastReps = item.exercise?.type && item.exercise.type <= 2 ? 6 : 10;
-
-        if (lastSessionExercise) {
-          const { data: lastSets } = await supabase
-            .from('sets')
-            .select('weight, reps')
-            .eq('session_exercise_id', lastSessionExercise.id)
-            .order('set_index')
-            .limit(1);
-
-          if (lastSets && lastSets.length > 0) {
-            lastWeight = lastSets[0].weight;
-            lastReps = lastSets[0].reps;
-          }
-        }
-
-        // Create session exercise with active_set_index = 1
-        const { data: newSe, error: seError } = await supabase
-          .from('session_exercises')
-          .insert({
-            session_id: session.id,
-            exercise_id: item.exercise_id,
-            sort_order: item.sort_order,
-            active_set_index: 1, // Always start from first set
-          })
-          .select()
-          .single();
-
-        if (seError) throw seError;
-
-        // Create sets based on target_sets with is_completed = false
-        const sets = Array.from({ length: item.target_sets }, (_, i) => ({
-          session_exercise_id: newSe.id,
-          set_index: i + 1,
-          weight: lastWeight,
-          reps: lastReps,
-          is_completed: false, // Always start fresh
-        }));
-
-        await supabase.from('sets').insert(sets);
-      }
-
-      // Update workout context with new session
-      await setActiveSession(session.id);
-
-      toast.success('Тренировка создана');
-      navigate('/workout');
-    } catch (error) {
-      console.error('Failed to start workout:', error);
-      toast.error('Ошибка создания тренировки');
-    } finally {
-      setIsStarting(false);
-    }
+  const handleStartWorkout = () => {
+    if (!templateId) return;
+    startWorkout(templateId, items);
   };
 
   if (!templateId) {
@@ -370,20 +241,38 @@ export default function TemplateEditor() {
           </Button>
         </div>
 
-        {/* Start Workout Button */}
-        <Button
-          onClick={handleStartWorkout}
-          disabled={isStarting || items.length === 0}
-          className="w-full h-14 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground mb-6"
-          size="lg"
-        >
-          {isStarting ? (
-            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-          ) : (
-            <Play className="h-5 w-5 mr-2" />
+        {/* Start Workout Button with Progress */}
+        <div className="mb-6">
+          <Button
+            onClick={handleStartWorkout}
+            disabled={isStarting || items.length === 0}
+            className="w-full h-14 text-lg font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
+            size="lg"
+          >
+            {isStarting ? (
+              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+            ) : (
+              <Play className="h-5 w-5 mr-2" />
+            )}
+            {isStarting && progress 
+              ? `${progress.message} (${progress.step}/${progress.total})`
+              : 'Начать тренировку'
+            }
+          </Button>
+          
+          {/* Progress bar */}
+          {isStarting && progress && (
+            <div className="mt-3 space-y-2">
+              <Progress value={(progress.step / progress.total) * 100} className="h-2" />
+              {slowConnection && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Wifi className="h-4 w-4" />
+                  <span>Слабое соединение: данные сохранятся</span>
+                </div>
+              )}
+            </div>
           )}
-          Начать тренировку
-        </Button>
+        </div>
 
         {/* Danger Zone */}
         <Card className="p-4 bg-card border-destructive/30">
