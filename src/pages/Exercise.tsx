@@ -805,28 +805,28 @@ export default function Exercise() {
             ))}
           </div>
         ) : (
-          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+          <div className="flex gap-2 mb-6 overflow-x-auto overflow-y-visible py-2 -my-1 px-1 -mx-1">
             {sets.map((set, index) => (
               <button
                 key={`set-${set.set_index}`}
                 onClick={() => handleSetSelect(index)}
-                className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all relative ${
+                className={`flex-shrink-0 min-w-[44px] min-h-[44px] px-3 py-2 rounded-lg font-medium font-mono transition-all relative ${
                   index === selectedSetIndex
-                    ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 ring-offset-background'
+                    ? 'bg-primary text-primary-foreground shadow-[inset_0_0_0_2px_hsl(var(--primary))]'
                     : set.is_completed
-                    ? 'bg-secondary/80 text-foreground border border-accent/40'
+                    ? 'bg-accent/10 text-accent border border-accent/30'
                     : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
                 }`}
               >
                 {set.is_completed && (
-                  <Check className="h-3 w-3 absolute -top-1 -right-1 text-accent bg-background rounded-full p-0.5 border border-accent/40" />
+                  <Check className="h-3 w-3 absolute top-0.5 right-0.5 text-accent" />
                 )}
                 {set.set_index}
               </button>
             ))}
             <button
               onClick={handleAddSet}
-              className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
+              className="flex-shrink-0 min-w-[44px] min-h-[44px] px-3 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
             >
               <Plus className="h-5 w-5" />
             </button>
@@ -857,16 +857,16 @@ export default function Exercise() {
           </Card>
         ) : currentSet && (
           <Card className="p-4 bg-card border-border mb-4">
-            {/* Weight + Set Complete + Reps - All in one row */}
-            <div className="flex items-stretch gap-3 mb-4">
+            {/* Weight + Reps Row */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
               {/* Weight */}
-              <div className="flex-1 text-center">
+              <div className="text-center">
                 <p className="text-xs text-muted-foreground mb-1">{t('weightKg')}</p>
                 <div className="flex items-center justify-center gap-1">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 rounded-full flex-shrink-0"
+                    className="h-11 w-11 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(-incrementValue)}
                   >
                     <Minus className="h-4 w-4" />
@@ -879,12 +879,12 @@ export default function Exercise() {
                     onChange={(e) => setWeightValue(e.target.value)}
                     onBlur={() => saveWeight(weightValue)}
                     onKeyDown={handleWeightKeyDown}
-                    className="w-16 h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
+                    className="w-[72px] h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
                   />
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 rounded-full flex-shrink-0"
+                    className="h-11 w-11 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(incrementValue)}
                   >
                     <Plus className="h-4 w-4" />
@@ -892,30 +892,14 @@ export default function Exercise() {
                 </div>
               </div>
 
-              {/* Set Complete Button - Center */}
-              <div className="flex flex-col items-center justify-end">
-                <button
-                  onClick={handleSetCompleted}
-                  className="flex flex-col items-center justify-center w-16 h-16 rounded-xl bg-secondary border-2 border-accent/40 hover:border-accent hover:bg-accent/10 transition-all"
-                >
-                  <Check className="h-5 w-5 text-accent mb-0.5" />
-                  <span className="text-[10px] font-medium text-muted-foreground leading-tight">
-                    {locale === 'ru' ? 'Подход' : 'Set'}
-                  </span>
-                  <span className="text-xs font-bold text-foreground font-mono">
-                    #{currentSet.set_index}
-                  </span>
-                </button>
-              </div>
-
               {/* Reps */}
-              <div className="flex-1 text-center">
+              <div className="text-center">
                 <p className="text-xs text-muted-foreground mb-1">{t('reps')}</p>
                 <div className="flex items-center justify-center gap-1">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 rounded-full flex-shrink-0"
+                    className="h-11 w-11 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(-1)}
                   >
                     <Minus className="h-4 w-4" />
@@ -928,18 +912,31 @@ export default function Exercise() {
                     onChange={(e) => setRepsValue(e.target.value)}
                     onBlur={() => saveReps(repsValue, false)}
                     onKeyDown={handleRepsKeyDown}
-                    className="w-16 h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
+                    className="w-[72px] h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
                   />
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-10 w-10 rounded-full flex-shrink-0"
+                    className="h-11 w-11 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(1)}
                   >
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
+            </div>
+
+            {/* Set Complete Button - Separate row on mobile */}
+            <div className="flex justify-center mb-4">
+              <button
+                onClick={handleSetCompleted}
+                className="flex items-center justify-center gap-2 h-11 px-6 max-w-[200px] rounded-lg bg-secondary border border-accent/30 hover:border-accent hover:bg-accent/10 transition-all active:scale-[0.98]"
+              >
+                <Check className="h-4 w-4 text-accent flex-shrink-0" />
+                <span className="text-sm font-medium text-foreground">
+                  {locale === 'ru' ? `Подход ${currentSet.set_index}` : `Set ${currentSet.set_index}`}
+                </span>
+              </button>
             </div>
 
             {/* RPE Selector - Compact */}
@@ -950,7 +947,7 @@ export default function Exercise() {
                   <button
                     key={rpe}
                     onClick={() => handleRpeChange(rpe)}
-                    className={`flex-1 h-8 rounded-md font-mono font-bold text-xs transition-colors ${
+                    className={`flex-1 min-h-[44px] rounded-md font-mono font-bold text-sm transition-colors ${
                       currentRpe === rpe
                         ? "bg-primary text-primary-foreground"
                         : rpe >= 9
