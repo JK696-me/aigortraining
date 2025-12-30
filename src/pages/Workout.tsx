@@ -17,6 +17,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
 import { useWorkout } from "@/contexts/WorkoutContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
+import { SessionListItem } from "@/hooks/useHistorySessions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,6 +85,8 @@ export default function Workout() {
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
   const [completionStatus, setCompletionStatus] = useState<'saving' | 'syncing' | 'offline_queued' | 'success' | null>(null);
+  const [completionStep, setCompletionStep] = useState<1 | 2 | 3>(1);
+  const queryClient = useQueryClient();
   const [isStarting, setIsStarting] = useState(false);
   const [isRepeating, setIsRepeating] = useState(false);
   const [timerData, setTimerData] = useState<SessionTimerData | null>(null);
@@ -367,7 +372,7 @@ export default function Workout() {
   }, [sessionMetadata, sessionExercises]);
 
   // Complete the workout (called after modal decision or directly)
-  // Two-phase completion: Phase A (optimistic local), Phase B (background sync)
+  // Two-phase completion: Phase A (optimistic local + history), Phase B (background sync)
   const completeWorkout = useCallback(async (finalElapsed: number) => {
     if (!sessionId || !user) return;
     
@@ -380,6 +385,7 @@ export default function Workout() {
     completionRequestIdRef.current = requestId;
     
     // PHASE A: Optimistic UI update (instant)
+    setCompletionStep(1);
     setCompletionStatus('saving');
     const completedSessionId = sessionId;
     const now = new Date();
@@ -392,51 +398,106 @@ export default function Workout() {
     // Clear local draft immediately (prevents resurrection)
     await clearDraft();
     
-    // PHASE B: Background sync with timeout
-    const syncWithTimeout = async (): Promise<'success' | 'timeout' | 'error'> => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
-      
-      try {
-        // Calculate progression for all exercises in the session
-        await calculateProgressionForSession(completedSessionId, user.id);
-        
-        setCompletionStatus('syncing');
-        
-        // Update session status to completed with undo window
-        const { error } = await supabase
-          .from('sessions')
-          .update({ 
-            status: 'completed',
-            completed_at: now.toISOString(),
-            elapsed_seconds: finalElapsed,
-            timer_running: false,
-            undo_available_until: undoUntil.toISOString(),
-          })
-          .eq('id', completedSessionId);
-
-        clearTimeout(timeoutId);
-        
-        if (error) throw error;
-        return 'success';
-      } catch (error: unknown) {
-        clearTimeout(timeoutId);
-        if (error instanceof Error && error.name === 'AbortError') {
-          return 'timeout';
+    // OPTIMISTIC: Insert into history cache immediately with pending status
+    const optimisticSession: SessionListItem & { _pending?: boolean } = {
+      id: completedSessionId,
+      date: now.toISOString(),
+      completed_at: now.toISOString(),
+      undo_available_until: undoUntil.toISOString(),
+      source: sessionMetadata?.source || 'empty',
+      template_id: sessionMetadata?.template_id || null,
+      template_name: null, // Will be updated on server sync
+      exercise_count: sessionExercises.length,
+      set_count: 0, // Will be updated after sync
+      _pending: true,
+    };
+    
+    // Prepend to history cache
+    queryClient.setQueryData(
+      queryKeys.sessions.completedList(user.id),
+      (oldData: { pages: { data: SessionListItem[]; nextCursor: string | null }[]; pageParams: (string | null)[] } | undefined) => {
+        if (!oldData) {
+          return {
+            pages: [{ data: [optimisticSession], nextCursor: null }],
+            pageParams: [null],
+          };
         }
-        console.error('Failed to sync workout completion:', error);
-        return 'error';
+        return {
+          ...oldData,
+          pages: oldData.pages.map((page, idx) => 
+            idx === 0 
+              ? { ...page, data: [optimisticSession, ...page.data.filter(s => s.id !== completedSessionId)] }
+              : page
+          ),
+        };
       }
+    );
+    
+    // PHASE B: Background sync with timeout
+    setCompletionStep(2);
+    setCompletionStatus('syncing');
+    
+    const syncWithTimeout = async (): Promise<'success' | 'timeout' | 'error'> => {
+      const timeoutPromise = new Promise<'timeout'>((resolve) => 
+        setTimeout(() => resolve('timeout'), 3000)
+      );
+      
+      const syncPromise = (async (): Promise<'success' | 'error'> => {
+        try {
+          // Calculate progression for all exercises in the session
+          await calculateProgressionForSession(completedSessionId, user.id);
+          
+          // Update session status to completed with undo window
+          const { error } = await supabase
+            .from('sessions')
+            .update({ 
+              status: 'completed',
+              completed_at: now.toISOString(),
+              elapsed_seconds: finalElapsed,
+              timer_running: false,
+              undo_available_until: undoUntil.toISOString(),
+            })
+            .eq('id', completedSessionId);
+
+          if (error) throw error;
+          return 'success';
+        } catch (error) {
+          console.error('Failed to sync workout completion:', error);
+          return 'error';
+        }
+      })();
+      
+      return Promise.race([syncPromise, timeoutPromise]);
     };
     
     const result = await syncWithTimeout();
     
+    setCompletionStep(3);
+    
     if (result === 'success') {
       setCompletionStatus('success');
+      
+      // Update history cache to remove pending status
+      queryClient.setQueryData(
+        queryKeys.sessions.completedList(user.id),
+        (oldData: { pages: { data: (SessionListItem & { _pending?: boolean })[]; nextCursor: string | null }[]; pageParams: (string | null)[] } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            pages: oldData.pages.map(page => ({
+              ...page,
+              data: page.data.map(s => 
+                s.id === completedSessionId ? { ...s, _pending: undefined } : s
+              ),
+            })),
+          };
+        }
+      );
       
       // Brief success state, then navigate
       setTimeout(() => {
         setCompletionStatus(null);
+        setCompletionStep(1);
         completionRequestIdRef.current = null;
         
         // Show toast with undo button
@@ -454,7 +515,7 @@ export default function Workout() {
         );
         
         navigate('/');
-      }, 400);
+      }, 300);
     } else {
       // Timeout or error - treat as offline, queue for later sync
       setCompletionStatus('offline_queued');
@@ -467,18 +528,17 @@ export default function Workout() {
         undoUntil: undoUntil.toISOString(),
       }));
       
-      toast.success(
-        locale === 'ru' ? 'Сохранено локально' : 'Saved locally',
-        { duration: 2000 }
-      );
+      // Keep optimistic session in cache with pending status
+      // It will be synced later
       
       setTimeout(() => {
         setCompletionStatus(null);
+        setCompletionStep(1);
         completionRequestIdRef.current = null;
         navigate('/');
-      }, 1000);
+      }, 800);
     }
-  }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate]);
+  }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate, queryClient, sessionMetadata, sessionExercises]);
 
   const handleFinishWorkout = async () => {
     if (!sessionId || !user) return;
@@ -1038,8 +1098,8 @@ export default function Workout() {
       {/* Completion Overlay */}
       <WorkoutCompletionOverlay
         isVisible={!!completionStatus}
+        step={completionStep}
         status={completionStatus || 'saving'}
-        showProgress={completionStatus === 'saving' || completionStatus === 'syncing'}
       />
     </Layout>
   );
