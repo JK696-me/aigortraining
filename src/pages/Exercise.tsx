@@ -83,6 +83,9 @@ export default function Exercise() {
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   
+  // Anti-duplicate modal: track which set we last showed modal for
+  const lastModalShownForRef = useRef<{ sessionExerciseId: string; setIndex: number } | null>(null);
+  
   // Preview state
   const [preview, setPreview] = useState<ProgressionPreview | null>(null);
   const [exerciseState, setExerciseState] = useState<ExerciseStateSnapshot | null>(null);
@@ -530,30 +533,45 @@ export default function Exercise() {
       return;
     }
     
-    // Mark current set as completed
+    // CAPTURE current set index BEFORE any updates
+    const completedSetIndex = currentSet.set_index;
+    const workSetsCount = exerciseStateData.current_sets;
+    
+    // Mark current set as completed (optimistic)
     updateSet({ setId: currentSet.id, updates: { weight, reps, is_completed: true } });
     
-    const currentSetsCount = exerciseStateData.current_sets;
-    const currentSetIndex = currentSet.set_index;
+    // STRICT MODAL CONDITION:
+    // Show modal ONLY if completing the LAST working set (set_index == work_sets_count)
+    // OR if completing an extra set (set_index > work_sets_count)
+    const isLastWorkingSet = completedSetIndex === workSetsCount;
+    const isExtraSet = completedSetIndex > workSetsCount;
     
-    // Find next working set
-    const nextWorkingSet = sets.find(s => 
-      s.set_index > currentSetIndex && s.set_index <= currentSetsCount
-    );
-    
-    if (nextWorkingSet) {
-      // Move to next working set - use unified setActiveSet
-      const nextIdx = sets.findIndex(s => s.id === nextWorkingSet.id);
-      setActiveSet(nextIdx, nextWorkingSet.set_index);
+    if (isLastWorkingSet || isExtraSet) {
+      // Check anti-duplicate: don't show modal twice for same set
+      const alreadyShown = lastModalShownForRef.current?.sessionExerciseId === sessionExerciseId 
+        && lastModalShownForRef.current?.setIndex === completedSetIndex;
       
-      // Auto-focus on reps after a short delay
-      setTimeout(() => {
-        repsInputRef.current?.focus();
-        repsInputRef.current?.select();
-      }, 100);
+      if (!alreadyShown) {
+        // Mark as shown to prevent duplicate
+        lastModalShownForRef.current = { sessionExerciseId, setIndex: completedSetIndex };
+        setShowLastSetDialog(true);
+      }
     } else {
-      // This was the last working set - show dialog
-      setShowLastSetDialog(true);
+      // Not last working set - auto-advance to next
+      const nextWorkingSet = sets.find(s => 
+        s.set_index > completedSetIndex && s.set_index <= workSetsCount
+      );
+      
+      if (nextWorkingSet) {
+        const nextIdx = sets.findIndex(s => s.id === nextWorkingSet.id);
+        setActiveSet(nextIdx, nextWorkingSet.set_index);
+        
+        // Auto-focus on reps after a short delay
+        setTimeout(() => {
+          repsInputRef.current?.focus();
+          repsInputRef.current?.select();
+        }, 100);
+      }
     }
     
     triggerPreviewUpdate();
