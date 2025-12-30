@@ -856,19 +856,20 @@ export default function Exercise() {
             </div>
           </Card>
         ) : currentSet && (
-          <Card className="p-6 bg-card border-border mb-6">
-            <div className="grid grid-cols-2 gap-6 mb-6">
+          <Card className="p-4 bg-card border-border mb-4">
+            {/* Weight + Set Complete + Reps - All in one row */}
+            <div className="flex items-stretch gap-3 mb-4">
               {/* Weight */}
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground mb-2">{t('weightKg')}</p>
-                <div className="flex items-center justify-center gap-2">
+              <div className="flex-1 text-center">
+                <p className="text-xs text-muted-foreground mb-1">{t('weightKg')}</p>
+                <div className="flex items-center justify-center gap-1">
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full flex-shrink-0"
+                    className="h-10 w-10 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(-incrementValue)}
                   >
-                    <Minus className="h-5 w-5" />
+                    <Minus className="h-4 w-4" />
                   </Button>
                   <Input
                     ref={weightInputRef}
@@ -878,30 +879,46 @@ export default function Exercise() {
                     onChange={(e) => setWeightValue(e.target.value)}
                     onBlur={() => saveWeight(weightValue)}
                     onKeyDown={handleWeightKeyDown}
-                    className="w-20 h-14 text-center text-2xl font-bold font-mono bg-secondary border-border"
+                    className="w-16 h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
                   />
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full flex-shrink-0"
+                    className="h-10 w-10 rounded-full flex-shrink-0"
                     onClick={() => handleWeightChange(incrementValue)}
                   >
-                    <Plus className="h-5 w-5" />
+                    <Plus className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
 
+              {/* Set Complete Button - Center */}
+              <div className="flex flex-col items-center justify-end">
+                <button
+                  onClick={handleSetCompleted}
+                  className="flex flex-col items-center justify-center w-16 h-16 rounded-xl bg-secondary border-2 border-accent/40 hover:border-accent hover:bg-accent/10 transition-all"
+                >
+                  <Check className="h-5 w-5 text-accent mb-0.5" />
+                  <span className="text-[10px] font-medium text-muted-foreground leading-tight">
+                    {locale === 'ru' ? 'Подход' : 'Set'}
+                  </span>
+                  <span className="text-xs font-bold text-foreground font-mono">
+                    #{currentSet.set_index}
+                  </span>
+                </button>
+              </div>
+
               {/* Reps */}
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground mb-2">{t('reps')}</p>
-                <div className="flex items-center justify-center gap-2">
+              <div className="flex-1 text-center">
+                <p className="text-xs text-muted-foreground mb-1">{t('reps')}</p>
+                <div className="flex items-center justify-center gap-1">
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full flex-shrink-0"
+                    className="h-10 w-10 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(-1)}
                   >
-                    <Minus className="h-5 w-5" />
+                    <Minus className="h-4 w-4" />
                   </Button>
                   <Input
                     ref={repsInputRef}
@@ -911,29 +928,29 @@ export default function Exercise() {
                     onChange={(e) => setRepsValue(e.target.value)}
                     onBlur={() => saveReps(repsValue, false)}
                     onKeyDown={handleRepsKeyDown}
-                    className="w-20 h-14 text-center text-2xl font-bold font-mono bg-secondary border-border"
+                    className="w-16 h-12 text-center text-xl font-bold font-mono bg-secondary border-border"
                   />
                   <Button
-                    variant="secondary"
+                    variant="ghost"
                     size="icon"
-                    className="h-12 w-12 rounded-full flex-shrink-0"
+                    className="h-10 w-10 rounded-full flex-shrink-0"
                     onClick={() => handleRepsChange(1)}
                   >
-                    <Plus className="h-5 w-5" />
+                    <Plus className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
             </div>
 
-            {/* RPE Selector */}
+            {/* RPE Selector - Compact */}
             <div>
-              <p className="text-sm text-muted-foreground mb-3 text-center">{t('rpeLabel')}</p>
+              <p className="text-xs text-muted-foreground mb-2 text-center">{t('rpeLabel')}</p>
               <div className="flex justify-between gap-1">
                 {rpeDisplayScale.map((rpe) => (
                   <button
                     key={rpe}
                     onClick={() => handleRpeChange(rpe)}
-                    className={`flex-1 h-10 rounded-lg font-mono font-bold text-sm transition-colors ${
+                    className={`flex-1 h-8 rounded-md font-mono font-bold text-xs transition-colors ${
                       currentRpe === rpe
                         ? "bg-primary text-primary-foreground"
                         : rpe >= 9
@@ -950,38 +967,6 @@ export default function Exercise() {
             </div>
           </Card>
         )}
-
-        {/* Compact Action Bar */}
-        <div className="flex gap-3 mb-4">
-          {/* Set Completed - Primary Action */}
-          <Button
-            onClick={handleSetCompleted}
-            className="flex-1 h-12 text-sm font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
-          >
-            <Check className="h-4 w-4 mr-2" />
-            {currentSet && (
-              <span className="mr-1 opacity-80 font-mono text-xs">#{currentSet.set_index}</span>
-            )}
-            {locale === 'ru' ? 'Выполнено' : 'Done'}
-          </Button>
-          
-          {/* Finish Exercise - Secondary Action */}
-          <Button
-            onClick={handleFinishExercise}
-            variant="secondary"
-            className="h-12 px-4 text-sm font-medium"
-            disabled={isFinishing}
-          >
-            {isFinishing ? (
-              <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                {locale === 'ru' ? 'Закончить' : 'Finish'}
-              </>
-            )}
-          </Button>
-        </div>
 
         {/* Quick Actions - Compact Grid */}
         <div className="grid grid-cols-4 gap-2 mb-4">
@@ -1126,14 +1111,14 @@ export default function Exercise() {
           </div>
         </Card>
 
-        {/* Finish Exercise Button */}
+        {/* Finish Exercise Button - Single CTA */}
         <Button
           onClick={handleFinishExercise}
           disabled={isFinishing || sets.length === 0}
-          className="w-full h-14 text-base font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
-          size="lg"
+          variant="secondary"
+          className="w-full h-12 text-sm font-medium"
         >
-          <Check className="h-5 w-5 mr-2" />
+          <ChevronLeft className="h-4 w-4 mr-2" />
           {isFinishing ? t('calculating') : t('finishExercise')}
         </Button>
       </div>
