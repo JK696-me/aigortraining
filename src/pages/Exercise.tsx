@@ -810,23 +810,23 @@ export default function Exercise() {
               <button
                 key={`set-${set.set_index}`}
                 onClick={() => handleSetSelect(index)}
-                className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-colors relative ${
+                className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all relative ${
                   index === selectedSetIndex
-                    ? 'bg-primary text-primary-foreground'
+                    ? 'bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2 ring-offset-background'
                     : set.is_completed
-                    ? 'bg-accent/20 text-accent'
-                    : 'bg-secondary text-muted-foreground'
+                    ? 'bg-secondary/80 text-foreground border border-accent/40'
+                    : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
                 }`}
               >
                 {set.is_completed && (
-                  <CheckCircle className="h-3 w-3 absolute -top-1 -right-1 text-accent" />
+                  <Check className="h-3 w-3 absolute -top-1 -right-1 text-accent bg-background rounded-full p-0.5 border border-accent/40" />
                 )}
                 {set.set_index}
               </button>
             ))}
             <button
               onClick={handleAddSet}
-              className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
+              className="flex-shrink-0 px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
             >
               <Plus className="h-5 w-5" />
             </button>
@@ -951,64 +951,85 @@ export default function Exercise() {
           </Card>
         )}
 
-        {/* Set Completed Button */}
-        <Button
-          onClick={handleSetCompleted}
-          className="w-full h-14 text-base font-semibold bg-accent hover:bg-accent/90 text-accent-foreground mb-4"
-          size="lg"
-        >
-          <CheckCircle className="h-5 w-5 mr-2" />
-          {locale === 'ru' ? 'Подход выполнен' : 'Set Completed'}
-        </Button>
+        {/* Compact Action Bar */}
+        <div className="flex gap-3 mb-4">
+          {/* Set Completed - Primary Action */}
+          <Button
+            onClick={handleSetCompleted}
+            className="flex-1 h-12 text-sm font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            <Check className="h-4 w-4 mr-2" />
+            {currentSet && (
+              <span className="mr-1 opacity-80 font-mono text-xs">#{currentSet.set_index}</span>
+            )}
+            {locale === 'ru' ? 'Выполнено' : 'Done'}
+          </Button>
+          
+          {/* Finish Exercise - Secondary Action */}
+          <Button
+            onClick={handleFinishExercise}
+            variant="secondary"
+            className="h-12 px-4 text-sm font-medium"
+            disabled={isFinishing}
+          >
+            {isFinishing ? (
+              <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <>
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                {locale === 'ru' ? 'Закончить' : 'Finish'}
+              </>
+            )}
+          </Button>
+        </div>
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
+        {/* Quick Actions - Compact Grid */}
+        <div className="grid grid-cols-4 gap-2 mb-4">
           <Button 
-            variant="secondary" 
-            className="h-14 text-base font-medium"
+            variant="outline" 
+            size="sm"
+            className="h-10 text-xs font-medium"
             onClick={handleQuickAddRep}
           >
-            <Plus className="h-4 w-4 mr-2" />
-            {t('addRep')}
+            <Plus className="h-3 w-3 mr-1" />
+            +1
           </Button>
           <Button 
-            variant="secondary" 
-            className="h-14 text-base font-medium"
+            variant="outline" 
+            size="sm"
+            className="h-10 text-xs font-medium"
             onClick={handleQuickAddWeight}
           >
-            <Plus className="h-4 w-4 mr-2" />
-            +{incrementValue} {t('kg')}
+            <Plus className="h-3 w-3 mr-1" />
+            {incrementValue}
           </Button>
-        </div>
-
-        {/* Quick Fill Buttons */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
           <Button 
-            variant="outline" 
-            className="h-12 text-sm font-medium"
+            variant="outline"
+            size="sm" 
+            className="h-10 text-xs font-medium"
             onClick={handleCopyLastAttempt}
           >
-            <Copy className="h-4 w-4 mr-2" />
-            Скопировать прошлую
+            <Copy className="h-3 w-3 mr-1" />
+            {locale === 'ru' ? 'Прош.' : 'Last'}
           </Button>
           <Button 
-            variant="outline" 
-            className="h-12 text-sm font-medium"
+            variant="outline"
+            size="sm" 
+            className="h-10 text-xs font-medium"
             onClick={handleFillAllSets}
           >
-            <Grid className="h-4 w-4 mr-2" />
-            Заполнить все
+            <Grid className="h-3 w-3 mr-1" />
+            {locale === 'ru' ? 'Все' : 'All'}
           </Button>
         </div>
 
-        {/* Add Set Button */}
+        {/* Add Set Button - Compact */}
         <Button
           onClick={handleAddSet}
-          variant="secondary"
-          className="w-full h-14 text-base font-medium mb-6"
-          size="lg"
+          variant="ghost"
+          className="w-full h-10 text-sm font-medium text-muted-foreground hover:text-foreground mb-6"
         >
-          <Plus className="h-5 w-5 mr-2" />
+          <Plus className="h-4 w-4 mr-2" />
           {t('addSet')}
         </Button>
 
