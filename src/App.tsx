@@ -1,8 +1,6 @@
-import { useState, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClientProvider } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
@@ -10,6 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { WorkoutProvider } from "@/contexts/WorkoutContext";
 import { CacheProvider } from "@/contexts/CacheContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { BackgroundSyncManager } from "@/components/BackgroundSyncManager";
 import { createQueryClient, createIDBPersister } from "@/lib/queryClient";
 import Home from "./pages/Home";
 import Workout from "./pages/Workout";
@@ -45,6 +44,7 @@ const App = () => (
       <AuthProvider>
         <CacheProvider queryClient={queryClient}>
           <WorkoutProvider>
+            <BackgroundSyncManager />
             <TooltipProvider>
               <Toaster />
               <Sonner />
