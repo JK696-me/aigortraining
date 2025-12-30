@@ -72,16 +72,17 @@ export default function Exercise() {
   const cachedExercise = sessionExerciseId ? getExercise(sessionExerciseId) : undefined;
   const cachedSets = sessionExerciseId ? getSets(sessionExerciseId) : [];
   
-  const [selectedSetIndex, setSelectedSetIndex] = useState<number | null>(null);
+  // Atomic resolution state for anti-flicker
+  const [resolvedSetIndex, setResolvedSetIndex] = useState<number | null>(null);
+  const [isResolving, setIsResolving] = useState(true);
+  const resolveTokenRef = useRef(0);
+  const prevSessionExerciseIdRef = useRef<string | null>(null);
+  
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [exerciseStateData, setExerciseStateData] = useState<ExerciseStateData | null>(null);
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  
-  // Anti-flicker: only for initial load, not for switching
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const prevExerciseIdRef = useRef<string | null>(null);
   
   // Preview state
   const [preview, setPreview] = useState<ProgressionPreview | null>(null);
@@ -186,8 +187,11 @@ export default function Exercise() {
     // No-op - cache is the source of truth
   }, []);
   
-  // isSwitchingExercise - now based on initial load state
-  const isSwitchingExercise = isInitialLoad && !cachedExercise;
+  // Use resolvedSetIndex as the selected set (prevents flickering)
+  const selectedSetIndex = resolvedSetIndex;
+  
+  // isSwitchingExercise - show neutral state during resolution
+  const isSwitchingExercise = isResolving;
 
   // Build switcher items from cached session
   const switcherItems: ExerciseSwitcherItem[] = useMemo(() => {
@@ -214,37 +218,57 @@ export default function Exercise() {
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
-  // Instant switch: resolve active set index from cache (no fetch!)
+  // ATOMIC RESOLVE: resolve active set index ONLY on exercise switch (not on cache updates)
   useEffect(() => {
-    if (!sessionExerciseId || !cachedExercise) return;
+    if (!sessionExerciseId) {
+      setIsResolving(false);
+      return;
+    }
     
-    // Check if this is a switch or initial load
-    const isSwitching = prevExerciseIdRef.current !== null && prevExerciseIdRef.current !== sessionExerciseId;
-    prevExerciseIdRef.current = sessionExerciseId;
+    // Check if this is actually a switch to a different exercise
+    const isSameExercise = prevSessionExerciseIdRef.current === sessionExerciseId;
+    
+    if (isSameExercise) {
+      // Same exercise - don't re-resolve, just update RPE if needed
+      if (cachedExercise) {
+        setCurrentRpe(cachedExercise.rpe);
+      }
+      return;
+    }
+    
+    // New exercise: start atomic resolution
+    const currentToken = ++resolveTokenRef.current;
+    prevSessionExerciseIdRef.current = sessionExerciseId;
+    setIsResolving(true);
+    setResolvedSetIndex(null); // Clear during resolution to prevent flash
+    
+    // Wait for cache to be ready
+    if (!cachedExercise) return;
     
     // Update RPE from cache
     setCurrentRpe(cachedExercise.rpe);
     
-    // Resolve active set index from cached data (instant, no fetch)
+    // Resolve synchronously from cache (no network!)
     const setsData = cachedSets;
+    let targetIndex = 0;
     
     if (setsData.length === 0) {
-      setSelectedSetIndex(0);
-      setIsInitialLoad(false);
+      // No sets - resolve immediately
+      if (resolveTokenRef.current === currentToken) {
+        setResolvedSetIndex(0);
+        setIsResolving(false);
+      }
       return;
     }
     
-    // Get current_sets from exercise_state (load in background if needed)
-    let currentSetsCount = exerciseStateData?.current_sets ?? 3;
-    
-    // Use saved active_set_index from cache if available
+    const currentSetsCount = exerciseStateData?.current_sets ?? 3;
     const savedActiveIndex = cachedExercise.active_set_index;
-    let resolvedIndex = 0;
     
     if (savedActiveIndex !== null && savedActiveIndex >= 1) {
+      // Use saved active_set_index from cache
       const matchingSetIdx = setsData.findIndex(s => s.set_index === savedActiveIndex);
       if (matchingSetIdx !== -1) {
-        resolvedIndex = matchingSetIdx;
+        targetIndex = matchingSetIdx;
       }
     } else {
       // Find first incomplete working set
@@ -253,20 +277,28 @@ export default function Exercise() {
       
       if (firstIncomplete) {
         const idx = setsData.findIndex(s => s.id === firstIncomplete.id);
-        if (idx !== -1) resolvedIndex = idx;
+        if (idx !== -1) targetIndex = idx;
       } else {
         // All complete - use last working set
         const lastWorkingSet = workingSets[workingSets.length - 1];
         if (lastWorkingSet) {
           const idx = setsData.findIndex(s => s.id === lastWorkingSet.id);
-          if (idx !== -1) resolvedIndex = idx;
+          if (idx !== -1) targetIndex = idx;
         }
       }
     }
     
-    setSelectedSetIndex(resolvedIndex);
-    setIsInitialLoad(false);
+    // Apply result ONLY if token is still current (prevents race conditions)
+    if (resolveTokenRef.current === currentToken) {
+      setResolvedSetIndex(targetIndex);
+      setIsResolving(false);
+    }
   }, [sessionExerciseId, cachedExercise, cachedSets, exerciseStateData]);
+  
+  // Helper to set selected index (wraps setResolvedSetIndex for user actions)
+  const setSelectedSetIndex = useCallback((index: number) => {
+    setResolvedSetIndex(index);
+  }, []);
 
   // Load exercise_state in background (only once per exercise)
   useEffect(() => {
