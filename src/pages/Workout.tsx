@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Check, ChevronRight, Timer, Dumbbell, Play, RotateCcw, Loader2, Undo2, MoreVertical, Trash2, RefreshCw } from "lucide-react";
+import { WorkoutCompletionOverlay } from "@/components/WorkoutCompletionOverlay";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Layout } from "@/components/Layout";
@@ -80,6 +81,7 @@ export default function Workout() {
   const [exerciseToDelete, setExerciseToDelete] = useState<{ id: string; name: string } | null>(null);
   const [workoutTime, setWorkoutTime] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [completionStatus, setCompletionStatus] = useState<'saving' | 'syncing' | 'offline_queued' | 'success' | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [isRepeating, setIsRepeating] = useState(false);
   const [timerData, setTimerData] = useState<SessionTimerData | null>(null);
@@ -87,6 +89,7 @@ export default function Workout() {
   const [undoAvailableUntil, setUndoAvailableUntil] = useState<Date | null>(null);
   const [isUndoing, setIsUndoing] = useState(false);
   const undoToastIdRef = useRef<string | number | null>(null);
+  const completionRequestIdRef = useRef<string | null>(null);
   
   // Template save modal state
   const [showTemplateSaveModal, setShowTemplateSaveModal] = useState(false);
@@ -364,61 +367,127 @@ export default function Workout() {
   }, [sessionMetadata, sessionExercises]);
 
   // Complete the workout (called after modal decision or directly)
+  // Two-phase completion: Phase A (optimistic local), Phase B (background sync)
   const completeWorkout = useCallback(async (finalElapsed: number) => {
     if (!sessionId || !user) return;
     
-    try {
-      // Calculate progression for all exercises in the session
-      await calculateProgressionForSession(sessionId, user.id);
+    // Anti-duplicate: generate unique request ID
+    const requestId = crypto.randomUUID();
+    if (completionRequestIdRef.current) {
+      console.log('[Workout] Completion already in progress, ignoring duplicate');
+      return;
+    }
+    completionRequestIdRef.current = requestId;
+    
+    // PHASE A: Optimistic UI update (instant)
+    setCompletionStatus('saving');
+    const completedSessionId = sessionId;
+    const now = new Date();
+    const undoUntil = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+    
+    // Store for undo immediately
+    setLastCompletedSessionId(completedSessionId);
+    setUndoAvailableUntil(undoUntil);
+    
+    // Clear local draft immediately (prevents resurrection)
+    await clearDraft();
+    
+    // PHASE B: Background sync with timeout
+    const syncWithTimeout = async (): Promise<'success' | 'timeout' | 'error'> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
       
-      const now = new Date();
-      const undoUntil = new Date(now.getTime() + 10 * 60 * 1000); // 10 minutes
+      try {
+        // Calculate progression for all exercises in the session
+        await calculateProgressionForSession(completedSessionId, user.id);
+        
+        setCompletionStatus('syncing');
+        
+        // Update session status to completed with undo window
+        const { error } = await supabase
+          .from('sessions')
+          .update({ 
+            status: 'completed',
+            completed_at: now.toISOString(),
+            elapsed_seconds: finalElapsed,
+            timer_running: false,
+            undo_available_until: undoUntil.toISOString(),
+          })
+          .eq('id', completedSessionId);
 
-      // Update session status to completed with undo window
-      const { error } = await supabase
-        .from('sessions')
-        .update({ 
-          status: 'completed',
-          completed_at: now.toISOString(),
-          elapsed_seconds: finalElapsed,
-          timer_running: false,
-          undo_available_until: undoUntil.toISOString(),
-        })
-        .eq('id', sessionId);
-
-      if (error) throw error;
-
-      // Store for undo
-      const completedSessionId = sessionId;
-      setLastCompletedSessionId(completedSessionId);
-      setUndoAvailableUntil(undoUntil);
-
-      // Clear local draft
-      await clearDraft();
-
-      // Show toast with undo button
-      undoToastIdRef.current = toast.success(
-        locale === 'ru' ? 'Тренировка завершена!' : 'Workout finished!',
-        {
-          duration: 10000,
-          action: {
-            label: locale === 'ru' ? 'Отменить' : 'Undo',
-            onClick: () => {
-              handleUndoWorkout();
-            },
-          },
+        clearTimeout(timeoutId);
+        
+        if (error) throw error;
+        return 'success';
+      } catch (error: unknown) {
+        clearTimeout(timeoutId);
+        if (error instanceof Error && error.name === 'AbortError') {
+          return 'timeout';
         }
+        console.error('Failed to sync workout completion:', error);
+        return 'error';
+      }
+    };
+    
+    const result = await syncWithTimeout();
+    
+    if (result === 'success') {
+      setCompletionStatus('success');
+      
+      // Brief success state, then navigate
+      setTimeout(() => {
+        setCompletionStatus(null);
+        completionRequestIdRef.current = null;
+        
+        // Show toast with undo button
+        undoToastIdRef.current = toast.success(
+          locale === 'ru' ? 'Тренировка завершена!' : 'Workout finished!',
+          {
+            duration: 10000,
+            action: {
+              label: locale === 'ru' ? 'Отменить' : 'Undo',
+              onClick: () => {
+                handleUndoWorkout();
+              },
+            },
+          }
+        );
+        
+        navigate('/');
+      }, 400);
+    } else {
+      // Timeout or error - treat as offline, queue for later sync
+      setCompletionStatus('offline_queued');
+      
+      // Store pending completion in localStorage for retry
+      localStorage.setItem(`pending_completion_${completedSessionId}`, JSON.stringify({
+        sessionId: completedSessionId,
+        finalElapsed,
+        completedAt: now.toISOString(),
+        undoUntil: undoUntil.toISOString(),
+      }));
+      
+      toast.success(
+        locale === 'ru' ? 'Сохранено локально' : 'Saved locally',
+        { duration: 2000 }
       );
-
-      navigate('/');
-    } catch (error) {
-      console.error('Failed to complete workout:', error);
-      toast.error('Failed to finish workout');
+      
+      setTimeout(() => {
+        setCompletionStatus(null);
+        completionRequestIdRef.current = null;
+        navigate('/');
+      }, 1000);
     }
   }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate]);
 
   const handleFinishWorkout = async () => {
     if (!sessionId || !user) return;
+    
+    // Anti-duplicate check
+    if (completionRequestIdRef.current) {
+      console.log('[Workout] Completion already in progress');
+      return;
+    }
     
     setIsFinishing(true);
     try {
@@ -457,6 +526,8 @@ export default function Workout() {
     } catch (error) {
       console.error('Failed to finish workout:', error);
       toast.error('Failed to finish workout');
+      completionRequestIdRef.current = null;
+      setCompletionStatus(null);
     } finally {
       setIsFinishing(false);
     }
@@ -962,6 +1033,13 @@ export default function Workout() {
         onSkip={handleSkipTemplateSave}
         templateName={pendingFinishData?.templateName || ''}
         isLoading={isSavingTemplate}
+      />
+
+      {/* Completion Overlay */}
+      <WorkoutCompletionOverlay
+        isVisible={!!completionStatus}
+        status={completionStatus || 'saving'}
+        showProgress={completionStatus === 'saving' || completionStatus === 'syncing'}
       />
     </Layout>
   );
