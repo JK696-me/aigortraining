@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Minus, ChevronLeft, History, Lightbulb, Check, Copy, Grid, CheckCircle } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -73,9 +73,8 @@ export default function Exercise() {
   const cachedSets = sessionExerciseId ? getSets(sessionExerciseId) : [];
   
   // Atomic resolution state for anti-flicker
-  const [resolvedSetIndex, setResolvedSetIndex] = useState<number | null>(null);
-  const [isResolving, setIsResolving] = useState(true);
-  const resolveTokenRef = useRef(0);
+  // renderActiveSetIndex: THE SINGLE source of truth for which set is active in UI
+  const [renderActiveSetIndex, setRenderActiveSetIndex] = useState<number | null>(null);
   const prevSessionExerciseIdRef = useRef<string | null>(null);
   
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
@@ -187,11 +186,11 @@ export default function Exercise() {
     // No-op - cache is the source of truth
   }, []);
   
-  // Use resolvedSetIndex as the selected set (prevents flickering)
-  const selectedSetIndex = resolvedSetIndex;
+  // Use renderActiveSetIndex as the selected set (prevents flickering)
+  const selectedSetIndex = renderActiveSetIndex;
   
-  // isSwitchingExercise - show neutral state during resolution
-  const isSwitchingExercise = isResolving;
+  // isSwitchingExercise - only true during initial load, not on cache updates
+  const isSwitchingExercise = isCacheLoading && !cachedExercise;
 
   // Build switcher items from cached session
   const switcherItems: ExerciseSwitcherItem[] = useMemo(() => {
@@ -218,87 +217,77 @@ export default function Exercise() {
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
-  // ATOMIC RESOLVE: resolve active set index ONLY on exercise switch (not on cache updates)
-  useEffect(() => {
-    if (!sessionExerciseId) {
-      setIsResolving(false);
-      return;
-    }
+  // SYNC RESOLVE: Use useLayoutEffect to set active set index BEFORE paint (no flicker)
+  // Source of truth: session_exercises.active_set_index from cache
+  useLayoutEffect(() => {
+    if (!sessionExerciseId) return;
     
-    // Check if this is actually a switch to a different exercise
+    // Check if this is a switch to a different exercise
     const isSameExercise = prevSessionExerciseIdRef.current === sessionExerciseId;
+    prevSessionExerciseIdRef.current = sessionExerciseId;
     
     if (isSameExercise) {
-      // Same exercise - don't re-resolve, just update RPE if needed
-      if (cachedExercise) {
-        setCurrentRpe(cachedExercise.rpe);
-      }
+      // Same exercise - don't re-resolve
       return;
     }
     
-    // New exercise: start atomic resolution
-    const currentToken = ++resolveTokenRef.current;
-    prevSessionExerciseIdRef.current = sessionExerciseId;
-    setIsResolving(true);
-    setResolvedSetIndex(null); // Clear during resolution to prevent flash
-    
-    // Wait for cache to be ready
-    if (!cachedExercise) return;
+    // New exercise: resolve synchronously from cache BEFORE paint
+    if (!cachedExercise) {
+      // Cache not ready yet - will re-run when cachedExercise is available
+      return;
+    }
     
     // Update RPE from cache
     setCurrentRpe(cachedExercise.rpe);
     
-    // Resolve synchronously from cache (no network!)
     const setsData = cachedSets;
-    let targetIndex = 0;
     
     if (setsData.length === 0) {
-      // No sets - resolve immediately
-      if (resolveTokenRef.current === currentToken) {
-        setResolvedSetIndex(0);
-        setIsResolving(false);
-      }
+      setRenderActiveSetIndex(0);
       return;
     }
     
-    const currentSetsCount = exerciseStateData?.current_sets ?? 3;
+    // SOURCE OF TRUTH: session_exercises.active_set_index
+    // ONLY use fallback logic during first-time initialization (when active_set_index is null)
     const savedActiveIndex = cachedExercise.active_set_index;
     
     if (savedActiveIndex !== null && savedActiveIndex >= 1) {
-      // Use saved active_set_index from cache
+      // Use saved active_set_index from DB (single source of truth)
       const matchingSetIdx = setsData.findIndex(s => s.set_index === savedActiveIndex);
-      if (matchingSetIdx !== -1) {
-        targetIndex = matchingSetIdx;
-      }
+      setRenderActiveSetIndex(matchingSetIdx !== -1 ? matchingSetIdx : 0);
     } else {
-      // Find first incomplete working set
-      const workingSets = setsData.filter(s => s.set_index >= 1 && s.set_index <= currentSetsCount);
-      const firstIncomplete = workingSets.find(s => !s.is_completed);
-      
-      if (firstIncomplete) {
-        const idx = setsData.findIndex(s => s.id === firstIncomplete.id);
-        if (idx !== -1) targetIndex = idx;
-      } else {
-        // All complete - use last working set
-        const lastWorkingSet = workingSets[workingSets.length - 1];
-        if (lastWorkingSet) {
-          const idx = setsData.findIndex(s => s.id === lastWorkingSet.id);
-          if (idx !== -1) targetIndex = idx;
-        }
-      }
+      // Fallback ONLY for first-time initialization: use first set
+      setRenderActiveSetIndex(0);
     }
+  }, [sessionExerciseId, cachedExercise, cachedSets]);
+
+  // Unified method to set active set - updates cache optimistically + persists to DB
+  const setActiveSet = useCallback((arrayIndex: number, setIndex: number) => {
+    if (!sessionExerciseId) return;
     
-    // Apply result ONLY if token is still current (prevents race conditions)
-    if (resolveTokenRef.current === currentToken) {
-      setResolvedSetIndex(targetIndex);
-      setIsResolving(false);
-    }
-  }, [sessionExerciseId, cachedExercise, cachedSets, exerciseStateData]);
+    // 1. Update local render state immediately
+    setRenderActiveSetIndex(arrayIndex);
+    
+    // 2. Update cache optimistically
+    updateExerciseOptimistic(sessionExerciseId, { active_set_index: setIndex });
+    
+    // 3. Persist to DB in background (fire and forget)
+    supabase
+      .from('session_exercises')
+      .update({ active_set_index: setIndex })
+      .eq('id', sessionExerciseId);
+  }, [sessionExerciseId, updateExerciseOptimistic]);
   
-  // Helper to set selected index (wraps setResolvedSetIndex for user actions)
-  const setSelectedSetIndex = useCallback((index: number) => {
-    setResolvedSetIndex(index);
-  }, []);
+  // Wrapper for external callers that only know array index
+  const setSelectedSetIndex = useCallback((arrayIndex: number) => {
+    const setIndexValue = sets[arrayIndex]?.set_index;
+    if (setIndexValue !== undefined) {
+      setActiveSet(arrayIndex, setIndexValue);
+    } else {
+      // Fallback for edge cases
+      setRenderActiveSetIndex(arrayIndex);
+    }
+  }, [sets, setActiveSet]);
 
   // Load exercise_state in background (only once per exercise)
   useEffect(() => {
@@ -518,29 +507,14 @@ export default function Exercise() {
     handleWeightChange(incrementValue);
   };
 
-  // Save active_set_index to DB
-  const saveActiveSetIndex = useCallback(async (setIndex: number) => {
-    if (!sessionExerciseId) return;
-    
-    await supabase
-      .from('session_exercises')
-      .update({ active_set_index: setIndex })
-      .eq('id', sessionExerciseId);
-  }, [sessionExerciseId]);
-
   const handleSetSelect = (index: number) => {
     // Save current values before switching
     if (currentSet) {
       saveWeight(weightValue);
       saveReps(repsValue, false);
     }
+    // Use unified setActiveSet which updates cache + DB
     setSelectedSetIndex(index);
-    
-    // Save active set index to DB
-    const setIndexValue = sets[index]?.set_index;
-    if (setIndexValue) {
-      saveActiveSetIndex(setIndexValue);
-    }
   };
 
   // Handle "Set Completed" button
@@ -568,10 +542,9 @@ export default function Exercise() {
     );
     
     if (nextWorkingSet) {
-      // Move to next working set
+      // Move to next working set - use unified setActiveSet
       const nextIdx = sets.findIndex(s => s.id === nextWorkingSet.id);
-      setSelectedSetIndex(nextIdx);
-      saveActiveSetIndex(nextWorkingSet.set_index);
+      setActiveSet(nextIdx, nextWorkingSet.set_index);
       
       // Auto-focus on reps after a short delay
       setTimeout(() => {
@@ -598,10 +571,9 @@ export default function Exercise() {
     
     // Switch to new set after a short delay
     setTimeout(() => {
-      const newSetIndex = sets.length;
-      setSelectedSetIndex(newSetIndex);
+      const newSetArrayIndex = sets.length;
       const newSetIndexValue = (sets[sets.length - 1]?.set_index || 0) + 1;
-      saveActiveSetIndex(newSetIndexValue);
+      setActiveSet(newSetArrayIndex, newSetIndexValue);
       repsInputRef.current?.focus();
     }, 150);
   };
