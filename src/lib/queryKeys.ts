@@ -41,6 +41,7 @@ export const queryKeys = {
     detail: (sessionId: string) => ['session', sessionId] as const,
     details: (sessionId: string) => ['session-details', sessionId] as const,
     full: (sessionId: string) => ['session-full', sessionId] as const,
+    fullCache: (sessionId: string) => ['session-full-cache', sessionId] as const,
     exercises: (sessionId: string) => ['session-exercises', sessionId] as const,
   },
   
