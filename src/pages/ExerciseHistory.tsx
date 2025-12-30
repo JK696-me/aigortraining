@@ -399,9 +399,18 @@ export default function ExerciseHistory() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-foreground">
-                      {formatSessionDate(session.completed_at)}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-foreground">
+                        {formatSessionDate(session.completed_at)}
+                      </p>
+                      {/* Show syncing badge for pending sessions */}
+                      {(session as SessionListItem & { _pending?: boolean })._pending && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {locale === 'ru' ? 'Синхронизация…' : 'Syncing…'}
+                        </span>
+                      )}
+                    </div>
                     {session.template_name && (
                       <p className="text-sm text-primary truncate">{session.template_name}</p>
                     )}
