@@ -966,42 +966,24 @@ export default function Exercise() {
         )}
 
         {/* Quick Actions - Compact Grid */}
-        <div className="grid grid-cols-4 gap-2 mb-4">
-          <Button 
-            variant="outline" 
-            size="sm"
-            className="h-10 text-xs font-medium"
-            onClick={handleQuickAddRep}
-          >
-            <Plus className="h-3 w-3 mr-1" />
-            +1
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            className="h-10 text-xs font-medium"
-            onClick={handleQuickAddWeight}
-          >
-            <Plus className="h-3 w-3 mr-1" />
-            {incrementValue}
-          </Button>
+        <div className="grid grid-cols-2 gap-3 mb-4">
           <Button 
             variant="outline"
             size="sm" 
-            className="h-10 text-xs font-medium"
+            className="h-12 text-xs font-medium leading-tight text-center"
             onClick={handleCopyLastAttempt}
           >
-            <Copy className="h-3 w-3 mr-1" />
-            {locale === 'ru' ? 'Прош.' : 'Last'}
+            <Copy className="h-4 w-4 mr-1.5 flex-shrink-0" />
+            <span>{locale === 'ru' ? 'Заполнить по прошлой' : 'Fill from last'}</span>
           </Button>
           <Button 
             variant="outline"
             size="sm" 
-            className="h-10 text-xs font-medium"
+            className="h-12 text-xs font-medium"
             onClick={handleFillAllSets}
           >
-            <Grid className="h-3 w-3 mr-1" />
-            {locale === 'ru' ? 'Все' : 'All'}
+            <Grid className="h-4 w-4 mr-1.5" />
+            {locale === 'ru' ? 'Заполнить все' : 'Fill all'}
           </Button>
         </div>
 
