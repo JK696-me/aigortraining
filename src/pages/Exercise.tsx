@@ -77,7 +77,7 @@ export default function Exercise() {
   const [renderActiveSetIndex, setRenderActiveSetIndex] = useState<number | null>(null);
   const prevSessionExerciseIdRef = useRef<string | null>(null);
   
-  const [currentRpe, setCurrentRpe] = useState<number | null>(null);
+  // currentRpe is now derived from currentSet.rpe (per-set RPE)
   const [isFinishing, setIsFinishing] = useState(false);
   const [exerciseStateData, setExerciseStateData] = useState<ExerciseStateData | null>(null);
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
@@ -146,6 +146,7 @@ export default function Exercise() {
       weight,
       reps,
       is_completed: false,
+      rpe: null,
     };
     
     // Optimistic add
@@ -240,8 +241,7 @@ export default function Exercise() {
       return;
     }
     
-    // Update RPE from cache
-    setCurrentRpe(cachedExercise.rpe);
+    // RPE is now per-set, no need to update from exercise level
     
     const setsData = cachedSets;
     
@@ -491,13 +491,16 @@ export default function Exercise() {
   };
 
   const handleRpeChange = async (rpe: number) => {
-    setCurrentRpe(rpe);
-    if (!sessionExerciseId) return;
+    if (!currentSet || !sessionExerciseId) return;
     
+    // Optimistic update in cache
+    updateSetOptimistic(sessionExerciseId, currentSet.id, { rpe });
+    
+    // Persist to DB
     await supabase
-      .from('session_exercises')
+      .from('sets')
       .update({ rpe })
-      .eq('id', sessionExerciseId);
+      .eq('id', currentSet.id);
     
     triggerPreviewUpdate();
   };
@@ -948,7 +951,7 @@ export default function Exercise() {
                     key={rpe}
                     onClick={() => handleRpeChange(rpe)}
                     className={`flex-1 min-h-[44px] rounded-md font-mono font-bold text-sm transition-colors ${
-                      currentRpe === rpe
+                      currentSet?.rpe === rpe
                         ? "bg-primary text-primary-foreground"
                         : rpe >= 9
                         ? "bg-destructive/20 text-destructive hover:bg-destructive/30"

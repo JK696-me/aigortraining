@@ -336,6 +336,7 @@ export type Database = {
           id: string
           is_completed: boolean
           reps: number
+          rpe: number | null
           session_exercise_id: string
           set_index: number
           weight: number
@@ -345,6 +346,7 @@ export type Database = {
           id?: string
           is_completed?: boolean
           reps: number
+          rpe?: number | null
           session_exercise_id: string
           set_index: number
           weight: number
@@ -354,6 +356,7 @@ export type Database = {
           id?: string
           is_completed?: boolean
           reps?: number
+          rpe?: number | null
           session_exercise_id?: string
           set_index?: number
           weight?: number

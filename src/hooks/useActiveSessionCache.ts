@@ -11,6 +11,7 @@ export interface CachedSet {
   weight: number;
   reps: number;
   is_completed: boolean;
+  rpe: number | null;
 }
 
 export interface CachedSessionExercise {
@@ -96,7 +97,7 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
       if (exerciseIds.length > 0) {
         const { data: setsData } = await supabase
           .from('sets')
-          .select('id, session_exercise_id, set_index, weight, reps, is_completed')
+          .select('id, session_exercise_id, set_index, weight, reps, is_completed, rpe')
           .in('session_exercise_id', exerciseIds)
           .order('set_index');
 
