@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Layout } from "@/components/Layout";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSets, useSessionExercises } from "@/hooks/useSessions";
 import { useWorkout } from "@/contexts/WorkoutContext";
+import { useActiveSessionCache, CachedSet } from "@/hooks/useActiveSessionCache";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { SwipeableSetItem } from "@/components/SwipeableSetItem";
@@ -27,25 +27,9 @@ import {
 
 const rpeDisplayScale = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
-interface SessionExerciseData {
-  id: string;
-  session_id: string;
-  exercise_id: string;
-  rpe: number | null;
-  active_set_index: number | null;
-  exercise: {
-    id: string;
-    name: string;
-    type: number;
-    increment_kind: string;
-    increment_value: number;
-  };
-}
-
 interface ExerciseStateData {
   current_sets: number;
 }
-
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -72,17 +56,32 @@ export default function Exercise() {
   const { user } = useAuth();
   const { activeSessionId } = useWorkout();
   
-  const [sessionExercise, setSessionExercise] = useState<SessionExerciseData | null>(null);
-  const [selectedSetIndex, setSelectedSetIndex] = useState<number | null>(null); // null = not resolved yet
+  // Use centralized cache for the active session
+  const { 
+    session, 
+    getExercise, 
+    getSets, 
+    updateSetOptimistic, 
+    updateExerciseOptimistic,
+    addSetOptimistic,
+    deleteSetOptimistic,
+    isLoading: isCacheLoading,
+  } = useActiveSessionCache(activeSessionId);
+  
+  // Get current exercise and sets from cache (instant, no loading)
+  const cachedExercise = sessionExerciseId ? getExercise(sessionExerciseId) : undefined;
+  const cachedSets = sessionExerciseId ? getSets(sessionExerciseId) : [];
+  
+  const [selectedSetIndex, setSelectedSetIndex] = useState<number | null>(null);
   const [currentRpe, setCurrentRpe] = useState<number | null>(null);
   const [isFinishing, setIsFinishing] = useState(false);
   const [exerciseStateData, setExerciseStateData] = useState<ExerciseStateData | null>(null);
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   
-  // Anti-flicker: loading state and switch token
-  const [isSwitchingExercise, setIsSwitchingExercise] = useState(true);
-  const switchTokenRef = useRef(0);
+  // Anti-flicker: only for initial load, not for switching
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const prevExerciseIdRef = useRef<string | null>(null);
   
   // Preview state
   const [preview, setPreview] = useState<ProgressionPreview | null>(null);
@@ -102,24 +101,107 @@ export default function Exercise() {
   
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
-  
-  const { sets, updateSet, addSet, deleteSet, isLoading, refetch: refetchSets } = useSets(sessionExerciseId);
-  
-  // Get all session exercises for the switcher
-  const { exercises: allSessionExercises } = useSessionExercises(activeSessionId);
 
-  // Build switcher items with progress status
+  // Use cached sets as the primary source
+  const sets = cachedSets;
+  const isLoading = isCacheLoading && !cachedExercise;
+  
+  // Compatibility alias for sessionExercise (used throughout the file)
+  const sessionExercise = cachedExercise ? {
+    id: cachedExercise.id,
+    session_id: cachedExercise.session_id,
+    exercise_id: cachedExercise.exercise_id,
+    rpe: cachedExercise.rpe,
+    active_set_index: cachedExercise.active_set_index,
+    exercise: cachedExercise.exercise!,
+  } : null;
+  
+  // Wrapper functions for updateSet/addSet/deleteSet with optimistic updates
+  const updateSet = useCallback(({ setId, updates }: { setId: string; updates: Partial<CachedSet> }) => {
+    if (!sessionExerciseId) return;
+    
+    // Optimistic update
+    updateSetOptimistic(sessionExerciseId, setId, updates);
+    
+    // Sync to server in background (fire and forget)
+    supabase
+      .from('sets')
+      .update(updates)
+      .eq('id', setId);
+  }, [sessionExerciseId, updateSetOptimistic]);
+  
+  const addSet = useCallback(({ weight, reps }: { weight: number; reps: number }) => {
+    if (!sessionExerciseId) return;
+    
+    const nextIndex = sets.length > 0 ? Math.max(...sets.map(s => s.set_index)) + 1 : 1;
+    const tempId = crypto.randomUUID();
+    
+    const newSet: CachedSet = {
+      id: tempId,
+      session_exercise_id: sessionExerciseId,
+      set_index: nextIndex,
+      weight,
+      reps,
+      is_completed: false,
+    };
+    
+    // Optimistic add
+    addSetOptimistic(sessionExerciseId, newSet);
+    
+    // Sync to server
+    supabase
+      .from('sets')
+      .insert({
+        session_exercise_id: sessionExerciseId,
+        set_index: nextIndex,
+        weight,
+        reps,
+      })
+      .select()
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          // Update with real ID
+          deleteSetOptimistic(sessionExerciseId, tempId);
+          addSetOptimistic(sessionExerciseId, data as CachedSet);
+        }
+      });
+  }, [sessionExerciseId, sets, addSetOptimistic, deleteSetOptimistic]);
+  
+  const deleteSet = useCallback((setId: string) => {
+    if (!sessionExerciseId) return;
+    
+    // Optimistic delete
+    deleteSetOptimistic(sessionExerciseId, setId);
+    
+    // Sync to server
+    supabase
+      .from('sets')
+      .delete()
+      .eq('id', setId);
+  }, [sessionExerciseId, deleteSetOptimistic]);
+  
+  // refetchSets is now a no-op since we use optimistic updates
+  const refetchSets = useCallback(() => {
+    // No-op - cache is the source of truth
+  }, []);
+  
+  // isSwitchingExercise - now based on initial load state
+  const isSwitchingExercise = isInitialLoad && !cachedExercise;
+
+  // Build switcher items from cached session
   const switcherItems: ExerciseSwitcherItem[] = useMemo(() => {
-    return allSessionExercises
+    if (!session) return [];
+    return session.exercises
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
       .map(se => ({
         id: se.id,
         exercise_id: se.exercise_id,
         name: se.exercise?.name || 'Unknown',
         sort_order: se.sort_order,
-        hasSets: exerciseProgress[se.id] ?? false,
+        hasSets: se.sets.some(s => s.weight > 0 || s.reps > 0),
       }));
-  }, [allSessionExercises, exerciseProgress]);
+  }, [session]);
 
   // Find current index in switcher
   const currentSwitcherIndex = useMemo(() => {
@@ -129,183 +211,101 @@ export default function Exercise() {
   const hasPrevExercise = currentSwitcherIndex > 0;
   const hasNextExercise = currentSwitcherIndex < switcherItems.length - 1;
 
-  // Update progress for all exercises on load
-  useEffect(() => {
-    const loadProgress = async () => {
-      if (!allSessionExercises.length) return;
-      
-      const progressMap: Record<string, boolean> = {};
-      
-      for (const se of allSessionExercises) {
-        const { data: setsData } = await supabase
-          .from('sets')
-          .select('weight, reps')
-          .eq('session_exercise_id', se.id)
-          .limit(10);
-        
-        progressMap[se.id] = setsData?.some(s => s.weight > 0 || s.reps > 0) ?? false;
-      }
-      
-      setExerciseProgress(progressMap);
-    };
-    
-    loadProgress();
-  }, [allSessionExercises]);
-
-  // Update current exercise progress when sets change
-  useEffect(() => {
-    if (sessionExerciseId && sets.length > 0) {
-      const hasSets = sets.some(s => s.weight > 0 || s.reps > 0);
-      setExerciseProgress(prev => ({ ...prev, [sessionExerciseId]: hasSets }));
-    }
-  }, [sessionExerciseId, sets]);
-
   // Debounced preview trigger
   const debouncedPreviewTrigger = useDebounce(previewTrigger, 400);
 
-
-  // Atomic resolution of active set index with race condition protection
+  // Instant switch: resolve active set index from cache (no fetch!)
   useEffect(() => {
-    if (!sessionExerciseId || !user) return;
+    if (!sessionExerciseId || !cachedExercise) return;
     
-    // Increment token to cancel previous requests
-    const currentToken = ++switchTokenRef.current;
+    // Check if this is a switch or initial load
+    const isSwitching = prevExerciseIdRef.current !== null && prevExerciseIdRef.current !== sessionExerciseId;
+    prevExerciseIdRef.current = sessionExerciseId;
     
-    // Reset state for new exercise
-    setIsSwitchingExercise(true);
-    setSelectedSetIndex(null);
-    setSessionExercise(null);
-    setExerciseStateData(null);
+    // Update RPE from cache
+    setCurrentRpe(cachedExercise.rpe);
     
-    const resolveActiveSetIndex = async () => {
-      // Fetch session exercise data
-      const { data: seData } = await supabase
-        .from('session_exercises')
-        .select(`
-          *,
-          exercise:exercises(id, name, type, increment_kind, increment_value),
-          session:sessions(id, template_id, source)
-        `)
-        .eq('id', sessionExerciseId)
-        .single();
-      
-      // Check if this request is still valid
-      if (switchTokenRef.current !== currentToken) return;
-      
-      if (!seData) {
-        setIsSwitchingExercise(false);
-        return;
+    // Resolve active set index from cached data (instant, no fetch)
+    const setsData = cachedSets;
+    
+    if (setsData.length === 0) {
+      setSelectedSetIndex(0);
+      setIsInitialLoad(false);
+      return;
+    }
+    
+    // Get current_sets from exercise_state (load in background if needed)
+    let currentSetsCount = exerciseStateData?.current_sets ?? 3;
+    
+    // Use saved active_set_index from cache if available
+    const savedActiveIndex = cachedExercise.active_set_index;
+    let resolvedIndex = 0;
+    
+    if (savedActiveIndex !== null && savedActiveIndex >= 1) {
+      const matchingSetIdx = setsData.findIndex(s => s.set_index === savedActiveIndex);
+      if (matchingSetIdx !== -1) {
+        resolvedIndex = matchingSetIdx;
       }
+    } else {
+      // Find first incomplete working set
+      const workingSets = setsData.filter(s => s.set_index >= 1 && s.set_index <= currentSetsCount);
+      const firstIncomplete = workingSets.find(s => !s.is_completed);
       
-      setSessionExercise(seData as SessionExerciseData);
-      setCurrentRpe(seData.rpe);
-      
-      // Fetch exercise state for current_sets
-      const exerciseId = (seData.exercise as { id: string })?.id;
-      let currentSetsCount = 3; // default
-      
-      if (exerciseId) {
-        const { data: stateData } = await supabase
-          .from('exercise_state')
-          .select('current_sets')
-          .eq('exercise_id', exerciseId)
-          .eq('user_id', user.id)
-          .maybeSingle();
-        
-        if (switchTokenRef.current !== currentToken) return;
-        
-        if (stateData) {
-          setExerciseStateData(stateData as ExerciseStateData);
-          currentSetsCount = stateData.current_sets;
-        }
-      }
-      
-      // Fetch sets for this session exercise
-      const { data: setsData } = await supabase
-        .from('sets')
-        .select('*')
-        .eq('session_exercise_id', sessionExerciseId)
-        .order('set_index');
-      
-      if (switchTokenRef.current !== currentToken) return;
-      
-      if (!setsData || setsData.length === 0) {
-        setSelectedSetIndex(0);
-        setIsSwitchingExercise(false);
-        return;
-      }
-      
-      // Resolve active set index
-      const savedActiveIndex = seData.active_set_index;
-      let resolvedIndex = 0;
-      
-      // A) If active_set_index is saved and valid
-      if (savedActiveIndex !== null && savedActiveIndex >= 1) {
-        const matchingSetIdx = setsData.findIndex(s => s.set_index === savedActiveIndex);
-        if (matchingSetIdx !== -1) {
-          resolvedIndex = matchingSetIdx;
-        }
+      if (firstIncomplete) {
+        const idx = setsData.findIndex(s => s.id === firstIncomplete.id);
+        if (idx !== -1) resolvedIndex = idx;
       } else {
-        // B) Find first incomplete working set
-        const workingSets = setsData.filter(s => s.set_index >= 1 && s.set_index <= currentSetsCount);
-        const firstIncomplete = workingSets.find(s => s.is_completed !== true);
-        
-        if (firstIncomplete) {
-          const idx = setsData.findIndex(s => s.id === firstIncomplete.id);
-          if (idx !== -1) {
-            resolvedIndex = idx;
-          }
-        } else {
-          // C) All working sets complete - open last working set
-          const lastWorkingSet = workingSets[workingSets.length - 1];
-          if (lastWorkingSet) {
-            const idx = setsData.findIndex(s => s.id === lastWorkingSet.id);
-            if (idx !== -1) {
-              resolvedIndex = idx;
-            }
-          }
+        // All complete - use last working set
+        const lastWorkingSet = workingSets[workingSets.length - 1];
+        if (lastWorkingSet) {
+          const idx = setsData.findIndex(s => s.id === lastWorkingSet.id);
+          if (idx !== -1) resolvedIndex = idx;
         }
       }
+    }
+    
+    setSelectedSetIndex(resolvedIndex);
+    setIsInitialLoad(false);
+  }, [sessionExerciseId, cachedExercise, cachedSets, exerciseStateData]);
+
+  // Load exercise_state in background (only once per exercise)
+  useEffect(() => {
+    if (!cachedExercise?.exercise_id || !user) return;
+    
+    const loadExerciseState = async () => {
+      const { data: stateData } = await supabase
+        .from('exercise_state')
+        .select('current_sets')
+        .eq('exercise_id', cachedExercise.exercise_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
       
-      // Final check before applying
-      if (switchTokenRef.current !== currentToken) return;
-      
-      setSelectedSetIndex(resolvedIndex);
-      setIsSwitchingExercise(false);
-      
-      // Load additional context (template name, last completed date) in background
-      const session = seData.session as { id: string; template_id: string | null; source: string } | null;
-      if (session?.template_id) {
-        const { data: templateData } = await supabase
-          .from('workout_templates')
-          .select('name')
-          .eq('id', session.template_id)
-          .maybeSingle();
-        if (templateData && switchTokenRef.current === currentToken) {
-          setTemplateName(templateData.name);
-        }
-      }
-      
-      if (exerciseId) {
-        const { data: lastSession } = await supabase
-          .from('session_exercises')
-          .select(`sessions!inner(completed_at, status)`)
-          .eq('exercise_id', exerciseId)
-          .eq('sessions.status', 'completed')
-          .eq('sessions.user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        
-        if (lastSession && switchTokenRef.current === currentToken) {
-          const sessionData = lastSession.sessions as { completed_at: string; status: string };
-          setLastCompletedDate(sessionData.completed_at);
-        }
+      if (stateData) {
+        setExerciseStateData(stateData as ExerciseStateData);
       }
     };
     
-    resolveActiveSetIndex();
-  }, [sessionExerciseId, user]);
+    loadExerciseState();
+  }, [cachedExercise?.exercise_id, user]);
+
+  // Load template name in background
+  useEffect(() => {
+    if (!session?.template_id) return;
+    
+    const loadTemplateName = async () => {
+      const { data: templateData } = await supabase
+        .from('workout_templates')
+        .select('name')
+        .eq('id', session.template_id!)
+        .maybeSingle();
+      
+      if (templateData) {
+        setTemplateName(templateData.name);
+      }
+    };
+    
+    loadTemplateName();
+  }, [session?.template_id]);
 
   // Load preview on trigger change (debounced)
   useEffect(() => {
