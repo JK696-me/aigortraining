@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { BottomNav } from "./BottomNav";
+import { useIntro } from "@/contexts/IntroContext";
 
 interface LayoutProps {
   children: ReactNode;
@@ -7,12 +8,15 @@ interface LayoutProps {
 }
 
 export function Layout({ children, hideNav = false }: LayoutProps) {
+  const { isIntroOpen } = useIntro();
+  const shouldHideNav = hideNav || isIntroOpen;
+  
   return (
     <div className="min-h-screen bg-background">
-      <main className={cn("pb-20", !hideNav && "pb-24")}>
+      <main className={cn("pb-20", !shouldHideNav && "pb-24")}>
         {children}
       </main>
-      {!hideNav && <BottomNav />}
+      {!shouldHideNav && <BottomNav />}
     </div>
   );
 }
