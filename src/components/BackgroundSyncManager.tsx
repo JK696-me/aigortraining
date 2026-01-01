@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { usePendingCompletionSync } from "@/hooks/usePendingCompletionSync";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
-import { IntroModal } from "@/components/IntroModal";
 import { useIntro } from "@/contexts/IntroContext";
+import { useTour } from "@/contexts/TourContext";
 
 // This component runs background sync tasks for authenticated users
 export function BackgroundSyncManager() {
@@ -12,21 +12,26 @@ export function BackgroundSyncManager() {
   // Unified app initialization: seeding + intro
   const { showIntro, completeIntro } = useAppInitialization();
   const { setIntroOpen } = useIntro();
+  const { startTour, isActive: isTourActive, dismissOnEnd } = useTour();
+  const wasActiveRef = useRef(false);
   
-  // Sync intro state with context
+  // Start tour when intro should show
   useEffect(() => {
-    setIntroOpen(showIntro);
-  }, [showIntro, setIntroOpen]);
+    if (showIntro && !isTourActive && !wasActiveRef.current) {
+      startTour();
+      setIntroOpen(true);
+    }
+  }, [showIntro, isTourActive, startTour, setIntroOpen]);
 
-  const handleComplete = (dismiss: boolean) => {
-    setIntroOpen(false);
-    completeIntro(dismiss);
-  };
+  // Handle tour ending
+  useEffect(() => {
+    if (wasActiveRef.current && !isTourActive) {
+      // Tour just ended
+      setIntroOpen(false);
+      completeIntro(dismissOnEnd);
+    }
+    wasActiveRef.current = isTourActive;
+  }, [isTourActive, setIntroOpen, completeIntro, dismissOnEnd]);
   
-  return (
-    <IntroModal 
-      open={showIntro} 
-      onComplete={handleComplete}
-    />
-  );
+  return null;
 }

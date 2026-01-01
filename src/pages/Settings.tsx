@@ -21,7 +21,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useWorkout } from "@/contexts/WorkoutContext";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOnboardingState } from "@/hooks/useOnboardingState";
-import { IntroModal } from "@/components/IntroModal";
+import { useTour } from "@/contexts/TourContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -33,14 +33,12 @@ export default function Settings() {
   const { user, signOut } = useAuth();
   const { clearDraft } = useWorkout();
   const { settings, updateSettings, isUpdating } = useUserSettings();
-  const { state: onboardingState, completeIntro, canRepeatIntro } = useOnboardingState();
+  const { canRepeatIntro } = useOnboardingState();
+  const { startTour } = useTour();
 
   const [barbellIncrement, setBarbellIncrement] = useState('5');
   const [dumbbellsIncrement, setDumbbellsIncrement] = useState('2');
   const [machineIncrement, setMachineIncrement] = useState('1');
-  
-  // Intro modal state
-  const [showIntro, setShowIntro] = useState(false);
   
   // Reset dialog state
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
@@ -62,12 +60,7 @@ export default function Settings() {
   };
 
   const handleRepeatIntro = () => {
-    setShowIntro(true);
-  };
-
-  const handleCompleteIntro = async (dismiss: boolean) => {
-    await completeIntro(dismiss);
-    setShowIntro(false);
+    startTour();
   };
 
   const handleSaveIncrement = (field: 'barbell_increment' | 'dumbbells_increment' | 'machine_increment', value: string) => {
@@ -382,12 +375,6 @@ export default function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Intro Modal */}
-      <IntroModal 
-        open={showIntro} 
-        onComplete={handleCompleteIntro}
-      />
     </Layout>
   );
 }

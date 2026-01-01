@@ -238,7 +238,7 @@ export default function Home() {
         )}
 
         {/* Main Actions */}
-        <div className="space-y-3 mb-8">
+        <div className="space-y-3 mb-8" data-tour="start-workout">
           <Button
             onClick={handleStartWorkout}
             disabled={isStarting}
@@ -272,7 +272,7 @@ export default function Home() {
         </div>
 
         {/* Templates Section */}
-        <section>
+        <section data-tour="templates-section">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold text-foreground">{t('templates')}</h2>
             <Button 

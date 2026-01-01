@@ -12,6 +12,7 @@ export function BottomNav() {
           to="/"
           className="flex flex-col items-center gap-1 px-2 py-2 text-muted-foreground transition-colors"
           activeClassName="text-primary"
+          data-tour="tab-home"
         >
           <Home className="h-5 w-5" />
           <span className="text-[10px] font-medium">{t('home')}</span>
@@ -20,6 +21,7 @@ export function BottomNav() {
           to="/workout"
           className="flex flex-col items-center gap-1 px-2 py-2 text-muted-foreground transition-colors"
           activeClassName="text-primary"
+          data-tour="tab-workout"
         >
           <Dumbbell className="h-5 w-5" />
           <span className="text-[10px] font-medium">{t('workout')}</span>
@@ -28,6 +30,7 @@ export function BottomNav() {
           to="/health"
           className="flex flex-col items-center gap-1 px-2 py-2 text-muted-foreground transition-colors"
           activeClassName="text-primary"
+          data-tour="tab-health"
         >
           <Heart className="h-5 w-5" />
           <span className="text-[10px] font-medium">{locale === 'ru' ? 'Здоровье' : 'Health'}</span>
@@ -36,6 +39,7 @@ export function BottomNav() {
           to="/exercise-history"
           className="flex flex-col items-center gap-1 px-2 py-2 text-muted-foreground transition-colors"
           activeClassName="text-primary"
+          data-tour="tab-history"
         >
           <History className="h-5 w-5" />
           <span className="text-[10px] font-medium">{t('history')}</span>
@@ -44,6 +48,7 @@ export function BottomNav() {
           to="/settings"
           className="flex flex-col items-center gap-1 px-2 py-2 text-muted-foreground transition-colors"
           activeClassName="text-primary"
+          data-tour="tab-settings"
         >
           <Settings className="h-5 w-5" />
           <span className="text-[10px] font-medium">{t('settings')}</span>
