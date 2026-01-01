@@ -1,17 +1,19 @@
 import { usePendingCompletionSync } from "@/hooks/usePendingCompletionSync";
-import { useExerciseSeeding } from "@/hooks/useExerciseSeeding";
-import { useTemplateSeeding } from "@/hooks/useTemplateSeeding";
+import { useAppInitialization } from "@/hooks/useAppInitialization";
+import { IntroModal } from "@/components/IntroModal";
 
 // This component runs background sync tasks for authenticated users
 export function BackgroundSyncManager() {
   // Auto-sync pending workout completions when network is restored
   usePendingCompletionSync();
   
-  // Seed base exercises for new users
-  useExerciseSeeding();
+  // Unified app initialization: seeding + intro
+  const { showIntro, completeIntro } = useAppInitialization();
   
-  // Seed starter templates for new users (after exercises)
-  useTemplateSeeding();
-  
-  return null;
+  return (
+    <IntroModal 
+      open={showIntro} 
+      onComplete={completeIntro}
+    />
+  );
 }

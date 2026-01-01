@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight, Trash2 } from "lucide-react";
+import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight, Trash2, BookOpen } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkout } from "@/contexts/WorkoutContext";
 import { useUserSettings } from "@/hooks/useUserSettings";
+import { useOnboardingState } from "@/hooks/useOnboardingState";
+import { IntroModal } from "@/components/IntroModal";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -31,10 +33,14 @@ export default function Settings() {
   const { user, signOut } = useAuth();
   const { clearDraft } = useWorkout();
   const { settings, updateSettings, isUpdating } = useUserSettings();
+  const { state: onboardingState, completeIntro, canRepeatIntro } = useOnboardingState();
 
   const [barbellIncrement, setBarbellIncrement] = useState('5');
   const [dumbbellsIncrement, setDumbbellsIncrement] = useState('2');
   const [machineIncrement, setMachineIncrement] = useState('1');
+  
+  // Intro modal state
+  const [showIntro, setShowIntro] = useState(false);
   
   // Reset dialog state
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
@@ -53,6 +59,15 @@ export default function Settings() {
   const handleSignOut = async () => {
     await signOut();
     toast.success(t('signOut'));
+  };
+
+  const handleRepeatIntro = () => {
+    setShowIntro(true);
+  };
+
+  const handleCompleteIntro = async (dismiss: boolean) => {
+    await completeIntro(dismiss);
+    setShowIntro(false);
   };
 
   const handleSaveIncrement = (field: 'barbell_increment' | 'dumbbells_increment' | 'machine_increment', value: string) => {
@@ -268,6 +283,18 @@ export default function Settings() {
             {t('about')}
           </h3>
           <Card className="bg-card border-border overflow-hidden">
+            {canRepeatIntro && (
+              <button
+                onClick={handleRepeatIntro}
+                className="flex items-center justify-between p-4 w-full border-b border-border"
+              >
+                <div className="flex items-center gap-3">
+                  <BookOpen className="h-5 w-5 text-muted-foreground" />
+                  <span className="font-medium text-foreground">Повторить интро</span>
+                </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              </button>
+            )}
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-3">
                 <Info className="h-5 w-5 text-muted-foreground" />
@@ -355,6 +382,12 @@ export default function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Intro Modal */}
+      <IntroModal 
+        open={showIntro} 
+        onComplete={handleCompleteIntro}
+      />
     </Layout>
   );
 }

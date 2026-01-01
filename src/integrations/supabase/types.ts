@@ -216,6 +216,33 @@ export type Database = {
           },
         ]
       }
+      onboarding_state: {
+        Row: {
+          first_seen_at: string | null
+          intro_completed_at: string | null
+          intro_dismissed: boolean
+          seed_done: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          first_seen_at?: string | null
+          intro_completed_at?: string | null
+          intro_dismissed?: boolean
+          seed_done?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          first_seen_at?: string | null
+          intro_completed_at?: string | null
+          intro_dismissed?: boolean
+          seed_done?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       seed_template_items: {
         Row: {
           exercise_name_ru: string
