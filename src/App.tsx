@@ -8,8 +8,10 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { WorkoutProvider } from "@/contexts/WorkoutContext";
 import { CacheProvider } from "@/contexts/CacheContext";
 import { IntroProvider } from "@/contexts/IntroContext";
+import { TourProvider } from "@/contexts/TourContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { BackgroundSyncManager } from "@/components/BackgroundSyncManager";
+import { TourOverlay } from "@/components/TourOverlay";
 import { createQueryClient, createIDBPersister } from "@/lib/queryClient";
 import Home from "./pages/Home";
 import Workout from "./pages/Workout";
@@ -46,27 +48,30 @@ const App = () => (
         <CacheProvider queryClient={queryClient}>
           <IntroProvider>
             <WorkoutProvider>
-              <BackgroundSyncManager />
               <TooltipProvider>
                 <Toaster />
                 <Sonner />
                 <BrowserRouter>
-                  <Routes>
-                    <Route path="/auth" element={<Auth />} />
-                    <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-                    <Route path="/workout" element={<ProtectedRoute><Workout /></ProtectedRoute>} />
-                    <Route path="/exercise" element={<ProtectedRoute><Exercise /></ProtectedRoute>} />
-                    <Route path="/exercise-history" element={<ProtectedRoute><ExerciseHistory /></ProtectedRoute>} />
-                    <Route path="/single-exercise-history" element={<ProtectedRoute><SingleExerciseHistory /></ProtectedRoute>} />
-                    <Route path="/exercise-progress" element={<ProtectedRoute><ExerciseProgress /></ProtectedRoute>} />
-                    <Route path="/exercises" element={<ProtectedRoute><ExercisesList /></ProtectedRoute>} />
-                    <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
-                    <Route path="/template-editor" element={<ProtectedRoute><TemplateEditor /></ProtectedRoute>} />
-                    <Route path="/health" element={<ProtectedRoute><Health /></ProtectedRoute>} />
-                    <Route path="/health-entry" element={<ProtectedRoute><HealthEntry /></ProtectedRoute>} />
-                    <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
+                  <TourProvider>
+                    <BackgroundSyncManager />
+                    <TourOverlay />
+                    <Routes>
+                      <Route path="/auth" element={<Auth />} />
+                      <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+                      <Route path="/workout" element={<ProtectedRoute><Workout /></ProtectedRoute>} />
+                      <Route path="/exercise" element={<ProtectedRoute><Exercise /></ProtectedRoute>} />
+                      <Route path="/exercise-history" element={<ProtectedRoute><ExerciseHistory /></ProtectedRoute>} />
+                      <Route path="/single-exercise-history" element={<ProtectedRoute><SingleExerciseHistory /></ProtectedRoute>} />
+                      <Route path="/exercise-progress" element={<ProtectedRoute><ExerciseProgress /></ProtectedRoute>} />
+                      <Route path="/exercises" element={<ProtectedRoute><ExercisesList /></ProtectedRoute>} />
+                      <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+                      <Route path="/template-editor" element={<ProtectedRoute><TemplateEditor /></ProtectedRoute>} />
+                      <Route path="/health" element={<ProtectedRoute><Health /></ProtectedRoute>} />
+                      <Route path="/health-entry" element={<ProtectedRoute><HealthEntry /></ProtectedRoute>} />
+                      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </TourProvider>
                 </BrowserRouter>
               </TooltipProvider>
             </WorkoutProvider>
