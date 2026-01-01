@@ -216,6 +216,59 @@ export type Database = {
           },
         ]
       }
+      seed_template_items: {
+        Row: {
+          exercise_name_ru: string
+          id: string
+          seed_template_id: string
+          sort_order: number
+          target_sets: number
+        }
+        Insert: {
+          exercise_name_ru: string
+          id?: string
+          seed_template_id: string
+          sort_order: number
+          target_sets?: number
+        }
+        Update: {
+          exercise_name_ru?: string
+          id?: string
+          seed_template_id?: string
+          sort_order?: number
+          target_sets?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "seed_template_items_seed_template_id_fkey"
+            columns: ["seed_template_id"]
+            isOneToOne: false
+            referencedRelation: "seed_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      seed_templates: {
+        Row: {
+          description_ru: string | null
+          id: string
+          key: string
+          title_ru: string
+        }
+        Insert: {
+          description_ru?: string | null
+          id?: string
+          key: string
+          title_ru: string
+        }
+        Update: {
+          description_ru?: string | null
+          id?: string
+          key?: string
+          title_ru?: string
+        }
+        Relationships: []
+      }
       session_exercises: {
         Row: {
           active_set_index: number | null
@@ -462,18 +515,21 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          seed_key: string | null
           user_id: string
         }
         Insert: {
           created_at?: string
           id?: string
           name: string
+          seed_key?: string | null
           user_id: string
         }
         Update: {
           created_at?: string
           id?: string
           name?: string
+          seed_key?: string | null
           user_id?: string
         }
         Relationships: [
