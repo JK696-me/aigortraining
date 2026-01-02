@@ -304,6 +304,7 @@ export type Database = {
           id: string
           performed_sets_count: number | null
           rpe: number | null
+          rpe_display: number | null
           session_id: string
           sort_order: number | null
         }
@@ -314,6 +315,7 @@ export type Database = {
           id?: string
           performed_sets_count?: number | null
           rpe?: number | null
+          rpe_display?: number | null
           session_id: string
           sort_order?: number | null
         }
@@ -324,6 +326,7 @@ export type Database = {
           id?: string
           performed_sets_count?: number | null
           rpe?: number | null
+          rpe_display?: number | null
           session_id?: string
           sort_order?: number | null
         }
