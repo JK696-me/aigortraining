@@ -17,6 +17,7 @@ export interface SessionExercise {
   session_id: string;
   exercise_id: string;
   rpe: number | null;
+  rpe_display: number | null;
   performed_sets_count: number | null;
   sort_order: number | null;
   created_at: string;

@@ -65,6 +65,7 @@ export default function Exercise() {
     updateExerciseOptimistic,
     addSetOptimistic,
     deleteSetOptimistic,
+    updateRpeDisplayOptimistic,
     isLoading: isCacheLoading,
   } = useActiveSessionCache(activeSessionId);
   
@@ -493,14 +494,32 @@ export default function Exercise() {
   const handleRpeChange = async (rpe: number) => {
     if (!currentSet || !sessionExerciseId) return;
     
-    // Optimistic update in cache
+    // Optimistic update in cache for set
     updateSetOptimistic(sessionExerciseId, currentSet.id, { rpe });
     
-    // Persist to DB
-    await supabase
-      .from('sets')
-      .update({ rpe })
-      .eq('id', currentSet.id);
+    // Calculate aggregated rpe_display: last completed set with rpe value
+    // After this update, find the last set (by set_index) that has an rpe value
+    const updatedSets = [...sets];
+    const currentSetIdx = updatedSets.findIndex(s => s.id === currentSet.id);
+    if (currentSetIdx !== -1) {
+      updatedSets[currentSetIdx] = { ...updatedSets[currentSetIdx], rpe };
+    }
+    
+    // Find last set with rpe (highest set_index with rpe not null)
+    const completedSetsWithRpe = updatedSets
+      .filter(s => s.rpe !== null)
+      .sort((a, b) => b.set_index - a.set_index);
+    
+    const rpeDisplay = completedSetsWithRpe.length > 0 ? completedSetsWithRpe[0].rpe : null;
+    
+    // Update rpe_display in cache
+    updateRpeDisplayOptimistic(sessionExerciseId, rpeDisplay);
+    
+    // Persist to DB (both set rpe and session_exercise rpe_display)
+    await Promise.all([
+      supabase.from('sets').update({ rpe }).eq('id', currentSet.id),
+      supabase.from('session_exercises').update({ rpe_display: rpeDisplay }).eq('id', sessionExerciseId),
+    ]);
     
     triggerPreviewUpdate();
   };

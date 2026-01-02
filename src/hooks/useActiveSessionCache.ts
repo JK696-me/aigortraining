@@ -19,6 +19,7 @@ export interface CachedSessionExercise {
   session_id: string;
   exercise_id: string;
   rpe: number | null;
+  rpe_display: number | null;
   active_set_index: number | null;
   sort_order: number | null;
   exercise: {
@@ -46,11 +47,12 @@ interface ActiveSessionCache {
   getExercise: (sessionExerciseId: string) => CachedSessionExercise | undefined;
   getSets: (sessionExerciseId: string) => CachedSet[];
   updateSetOptimistic: (sessionExerciseId: string, setId: string, updates: Partial<CachedSet>) => void;
-  updateExerciseOptimistic: (sessionExerciseId: string, updates: Partial<Pick<CachedSessionExercise, 'rpe' | 'active_set_index'>>) => void;
+  updateExerciseOptimistic: (sessionExerciseId: string, updates: Partial<Pick<CachedSessionExercise, 'rpe' | 'active_set_index' | 'rpe_display'>>) => void;
   addSetOptimistic: (sessionExerciseId: string, newSet: CachedSet) => void;
   deleteSetOptimistic: (sessionExerciseId: string, setId: string) => void;
   replaceExerciseOptimistic: (sessionExerciseId: string, newExerciseId: string, exerciseInfo: CachedSessionExercise['exercise'], newSets: CachedSet[]) => void;
   updateExerciseSortOrderOptimistic: (updates: { id: string; sort_order: number }[]) => void;
+  updateRpeDisplayOptimistic: (sessionExerciseId: string, rpeDisplay: number | null) => void;
   refetch: () => void;
 }
 
@@ -82,6 +84,7 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
           session_id,
           exercise_id,
           rpe,
+          rpe_display,
           active_set_index,
           sort_order,
           exercise:exercises(id, name, type, increment_kind, increment_value)
@@ -112,6 +115,7 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
         session_id: e.session_id,
         exercise_id: e.exercise_id,
         rpe: e.rpe,
+        rpe_display: e.rpe_display,
         active_set_index: e.active_set_index,
         sort_order: e.sort_order,
         exercise: e.exercise as CachedSessionExercise['exercise'],
@@ -311,6 +315,25 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     });
   }, [queryClient, cacheKey]);
 
+  // Update rpe_display optimistically
+  const updateRpeDisplayOptimistic = useCallback((
+    sessionExerciseId: string,
+    rpeDisplay: number | null
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      return {
+        ...old,
+        exercises: old.exercises.map(exercise => 
+          exercise.id === sessionExerciseId 
+            ? { ...exercise, rpe_display: rpeDisplay } 
+            : exercise
+        ),
+      };
+    });
+  }, [queryClient, cacheKey]);
+
   return {
     session,
     isLoading,
@@ -323,6 +346,7 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     deleteSetOptimistic,
     replaceExerciseOptimistic,
     updateExerciseSortOrderOptimistic,
+    updateRpeDisplayOptimistic,
     refetch,
   };
 }
