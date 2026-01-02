@@ -236,45 +236,31 @@ export function useSessionExercises(sessionId: string | null) {
     }) => {
       if (!sessionId || !user) throw new Error('Not authenticated');
 
-      // Get the old exercise's sort_order before deleting
-      const { data: oldExercise, error: fetchError } = await supabase
+      // IN-PLACE UPDATE: Keep the same session_exercise_id, just update exercise_id
+      // This ensures navigation continues to work since session_exercise_id stays the same
+      
+      // 1. Update the existing session_exercise row with new exercise_id
+      const { error: updateError } = await supabase
         .from('session_exercises')
-        .select('sort_order')
-        .eq('id', oldSessionExerciseId)
-        .single();
+        .update({ 
+          exercise_id: newExerciseId,
+          active_set_index: 1,
+          rpe: null,
+        })
+        .eq('id', oldSessionExerciseId);
       
-      if (fetchError) throw fetchError;
-      
-      const oldSortOrder = oldExercise?.sort_order;
+      if (updateError) throw updateError;
 
-      // Delete old session exercise and its sets
+      // 2. Delete old sets for this session_exercise
       await supabase
         .from('sets')
         .delete()
         .eq('session_exercise_id', oldSessionExerciseId);
-      
-      await supabase
-        .from('session_exercises')
-        .delete()
-        .eq('id', oldSessionExerciseId);
 
-      // Create new session exercise with the same sort_order
-      const { data: sessionExercise, error: seError } = await supabase
-        .from('session_exercises')
-        .insert({ 
-          session_id: sessionId, 
-          exercise_id: newExerciseId,
-          sort_order: oldSortOrder
-        })
-        .select()
-        .single();
-      
-      if (seError) throw seError;
-
-      // Create initial sets for new exercise
+      // 3. Create new sets for the new exercise
       if (initialSets.length > 0) {
         const setsToInsert = initialSets.map((set, index) => ({
-          session_exercise_id: sessionExercise.id,
+          session_exercise_id: oldSessionExerciseId,
           set_index: index + 1,
           weight: set.weight,
           reps: set.reps,
@@ -283,10 +269,24 @@ export function useSessionExercises(sessionId: string | null) {
         await supabase.from('sets').insert(setsToInsert);
       }
 
-      return sessionExercise;
+      // 4. Fetch and return the updated session_exercise with exercise details
+      const { data: updatedExercise, error: fetchError } = await supabase
+        .from('session_exercises')
+        .select(`
+          *,
+          exercise:exercises(id, name, type, increment_kind, increment_value)
+        `)
+        .eq('id', oldSessionExerciseId)
+        .single();
+      
+      if (fetchError) throw fetchError;
+      
+      return updatedExercise;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
+      // Also invalidate the full session cache to update the ExerciseSwitcher
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions.fullCache(sessionId || '') });
     },
   });
 

@@ -9,6 +9,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
+import { useActiveSessionCache, CachedSet } from "@/hooks/useActiveSessionCache";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -77,6 +78,7 @@ export default function Workout() {
   const sessionId = activeSessionId;
   
   const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
+  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic } = useActiveSessionCache(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
   const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
@@ -253,11 +255,38 @@ export default function Workout() {
       }));
 
       if (pickerMode === 'replace' && replacingExerciseId) {
-        await replaceExercise({
+        // Optimistic update: immediately update the cache before DB sync
+        const tempSets: CachedSet[] = initialSets.map((set, index) => ({
+          id: crypto.randomUUID(),
+          session_exercise_id: replacingExerciseId,
+          set_index: index + 1,
+          weight: set.weight,
+          reps: set.reps,
+          is_completed: false,
+          rpe: null,
+        }));
+        
+        const exerciseInfo = {
+          id: exercise.id,
+          name: exercise.name,
+          type: exercise.type,
+          increment_kind: exercise.increment_kind,
+          increment_value: exercise.increment_value,
+        };
+        
+        // Apply optimistic update immediately
+        replaceExerciseOptimistic(replacingExerciseId, exercise.id, exerciseInfo, tempSets);
+        
+        // Then sync to database (in background)
+        replaceExercise({
           oldSessionExerciseId: replacingExerciseId,
           newExerciseId: exercise.id,
           initialSets,
+        }).catch((error) => {
+          console.error('Failed to replace exercise:', error);
+          toast.error(locale === 'ru' ? 'Ошибка замены' : 'Failed to replace');
         });
+        
         toast.success(locale === 'ru' ? 'Упражнение заменено' : 'Exercise replaced');
         setReplacingExerciseId(null);
       } else {
@@ -300,6 +329,9 @@ export default function Workout() {
   };
 
   const handleReorderExercises = async (newOrder: { id: string; sort_order: number }[]) => {
+    // Optimistic update: immediately update the cache
+    updateExerciseSortOrderOptimistic(newOrder);
+    // Then sync to database
     await reorderExercises(newOrder);
   };
 

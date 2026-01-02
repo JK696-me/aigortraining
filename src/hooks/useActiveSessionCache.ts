@@ -49,6 +49,8 @@ interface ActiveSessionCache {
   updateExerciseOptimistic: (sessionExerciseId: string, updates: Partial<Pick<CachedSessionExercise, 'rpe' | 'active_set_index'>>) => void;
   addSetOptimistic: (sessionExerciseId: string, newSet: CachedSet) => void;
   deleteSetOptimistic: (sessionExerciseId: string, setId: string) => void;
+  replaceExerciseOptimistic: (sessionExerciseId: string, newExerciseId: string, exerciseInfo: CachedSessionExercise['exercise'], newSets: CachedSet[]) => void;
+  updateExerciseSortOrderOptimistic: (updates: { id: string; sort_order: number }[]) => void;
   refetch: () => void;
 }
 
@@ -251,6 +253,64 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     );
   }, [queryClient, cacheKey]);
 
+  // Replace exercise optimistically (in-place update)
+  const replaceExerciseOptimistic = useCallback((
+    sessionExerciseId: string,
+    newExerciseId: string,
+    exerciseInfo: CachedSessionExercise['exercise'],
+    newSets: CachedSet[]
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      return {
+        ...old,
+        exercises: old.exercises.map(exercise => {
+          if (exercise.id !== sessionExerciseId) return exercise;
+
+          return {
+            ...exercise,
+            exercise_id: newExerciseId,
+            exercise: exerciseInfo,
+            active_set_index: 1,
+            rpe: null,
+            sets: newSets,
+          };
+        }),
+      };
+    });
+
+    // Also update the individual sets query
+    queryClient.setQueryData(
+      queryKeys.sets.bySessionExercise(sessionExerciseId),
+      newSets
+    );
+  }, [queryClient, cacheKey]);
+
+  // Update sort order for multiple exercises optimistically
+  const updateExerciseSortOrderOptimistic = useCallback((
+    updates: { id: string; sort_order: number }[]
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      const updatesMap = new Map(updates.map(u => [u.id, u.sort_order]));
+
+      return {
+        ...old,
+        exercises: old.exercises
+          .map(exercise => {
+            const newSortOrder = updatesMap.get(exercise.id);
+            if (newSortOrder !== undefined) {
+              return { ...exercise, sort_order: newSortOrder };
+            }
+            return exercise;
+          })
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+      };
+    });
+  }, [queryClient, cacheKey]);
+
   return {
     session,
     isLoading,
@@ -261,6 +321,8 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     updateExerciseOptimistic,
     addSetOptimistic,
     deleteSetOptimistic,
+    replaceExerciseOptimistic,
+    updateExerciseSortOrderOptimistic,
     refetch,
   };
 }
