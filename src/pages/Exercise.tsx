@@ -734,34 +734,43 @@ export default function Exercise() {
     }
   };
 
-  // Fill all sets like current
-  const handleFillAllSets = async () => {
-    if (!currentSet || !exerciseState) return;
+  // Fill all sets like current (optimistic + bulk update)
+  const handleFillAllSets = useCallback(async () => {
+    if (!currentSet || !sessionExerciseId) return;
     
-    const workingSetsCount = exerciseState.current_sets;
     const weight = parseFloat(weightValue) || currentSet.weight;
     const reps = parseInt(repsValue, 10) || currentSet.reps;
+    const rpe = currentSet.rpe;
     
-    try {
-      // Update all working sets (first N sets by set_index)
-      for (const setItem of sets) {
-        if (setItem.set_index <= workingSetsCount) {
-          await supabase
-            .from('sets')
-            .update({ weight, reps })
-            .eq('id', setItem.id);
-        }
-      }
-      
-      // Refetch sets
-      refetchSets();
-      triggerPreviewUpdate();
-      toast.success('Все подходы заполнены');
-    } catch (error) {
-      console.error('Failed to fill all sets:', error);
-      toast.error('Ошибка заполнения');
+    // Validation
+    if (weight <= 0 && reps <= 0) {
+      toast.error(locale === 'ru' ? 'Сначала введите вес и повторы' : 'Enter weight and reps first');
+      return;
     }
-  };
+    
+    // Get all set IDs to update
+    const setIds = sets.map(s => s.id);
+    
+    // Optimistic update: update all sets in cache immediately
+    for (const setItem of sets) {
+      updateSetOptimistic(sessionExerciseId, setItem.id, { weight, reps, rpe });
+    }
+    
+    // Single bulk update to DB
+    const { error } = await supabase
+      .from('sets')
+      .update({ weight, reps, rpe })
+      .in('id', setIds);
+    
+    if (error) {
+      console.error('Failed to fill all sets:', error);
+      toast.error(locale === 'ru' ? 'Ошибка заполнения' : 'Fill error');
+      return;
+    }
+    
+    triggerPreviewUpdate();
+    toast.success(locale === 'ru' ? 'Все подходы заполнены' : 'All sets filled');
+  }, [currentSet, sessionExerciseId, weightValue, repsValue, sets, updateSetOptimistic, triggerPreviewUpdate, locale]);
 
   if (!sessionExerciseId || !sessionExercise) {
     return (
