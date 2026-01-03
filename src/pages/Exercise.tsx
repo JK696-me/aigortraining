@@ -373,14 +373,28 @@ export default function Exercise() {
     }
   }, [currentSet?.id, currentSet?.weight, currentSet?.reps]);
 
-  // Auto-focus on reps when set changes
+  // Smart auto-focus: weight if empty, else reps
   useEffect(() => {
-    if (currentSet && repsInputRef.current) {
-      setTimeout(() => {
+    if (!currentSet) return;
+    
+    // Short delay to let the UI settle
+    const timer = setTimeout(() => {
+      const weight = parseFloat(weightValue) || 0;
+      const reps = parseInt(repsValue, 10) || 0;
+      
+      if (weight <= 0) {
+        // Focus weight first if empty
+        weightInputRef.current?.focus();
+        weightInputRef.current?.select();
+      } else if (reps <= 0) {
+        // Focus reps if weight is set but reps empty
         repsInputRef.current?.focus();
         repsInputRef.current?.select();
-      }, 100);
-    }
+      }
+      // If both are set, don't auto-focus (let user select RPE or complete)
+    }, 100);
+    
+    return () => clearTimeout(timer);
   }, [currentSet?.id]);
 
   const incrementValue = sessionExercise?.exercise?.increment_value || 2.5;
@@ -467,14 +481,20 @@ export default function Exercise() {
 
   const handleWeightKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       saveWeight(weightValue);
+      // Auto-focus reps after weight
       repsInputRef.current?.focus();
+      repsInputRef.current?.select();
     }
   };
 
   const handleRepsKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      saveReps(repsValue, true);
+      e.preventDefault();
+      saveReps(repsValue, false);
+      // Blur to close keyboard and highlight RPE section
+      repsInputRef.current?.blur();
     }
   };
 
