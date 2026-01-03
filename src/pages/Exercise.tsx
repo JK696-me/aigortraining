@@ -103,6 +103,9 @@ export default function Exercise() {
   // Exercise switcher: set progress cache (id -> hasSets)
   const [exerciseProgress, setExerciseProgress] = useState<Record<string, boolean>>({});
   
+  // RPE highlight state
+  const [rpeHighlight, setRpeHighlight] = useState(false);
+  
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
 
@@ -495,6 +498,10 @@ export default function Exercise() {
       saveReps(repsValue, false);
       // Blur to close keyboard and highlight RPE section
       repsInputRef.current?.blur();
+      
+      // Trigger RPE highlight for 2 seconds
+      setRpeHighlight(true);
+      setTimeout(() => setRpeHighlight(false), 2000);
     }
   };
 
@@ -991,7 +998,11 @@ export default function Exercise() {
             </div>
 
             {/* RPE Selector - Compact */}
-            <div>
+            <div className={`rounded-lg p-2 -m-2 transition-all duration-300 ${
+              rpeHighlight 
+                ? 'ring-2 ring-primary/60 ring-offset-2 ring-offset-card animate-pulse' 
+                : ''
+            }`}>
               <p className="text-xs text-muted-foreground mb-2 text-center">{t('rpeLabel')}</p>
               <div className="flex justify-between gap-1">
                 {rpeDisplayScale.map((rpe) => (
