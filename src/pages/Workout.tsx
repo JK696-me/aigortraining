@@ -9,7 +9,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
-import { useActiveSessionCache, CachedSet } from "@/hooks/useActiveSessionCache";
+import { useActiveSessionCache, CachedSet, CachedSessionExercise } from "@/hooks/useActiveSessionCache";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -78,7 +78,7 @@ export default function Workout() {
   const sessionId = activeSessionId;
   
   const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
-  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic } = useActiveSessionCache(sessionId);
+  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession } = useActiveSessionCache(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
   const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
@@ -290,7 +290,58 @@ export default function Workout() {
         toast.success(locale === 'ru' ? 'Упражнение заменено' : 'Exercise replaced');
         setReplacingExerciseId(null);
       } else {
-        await addExercise({ exerciseId: exercise.id, initialSets });
+        // Optimistic update for adding new exercise
+        const tempSessionExerciseId = crypto.randomUUID();
+        const maxOrder = sessionExercises.length > 0 
+          ? Math.max(...sessionExercises.map(e => e.sort_order ?? 0)) 
+          : 0;
+        
+        const tempSets: CachedSet[] = initialSets.map((set, index) => ({
+          id: crypto.randomUUID(),
+          session_exercise_id: tempSessionExerciseId,
+          set_index: index + 1,
+          weight: set.weight,
+          reps: set.reps,
+          is_completed: false,
+          rpe: null,
+        }));
+        
+        const optimisticExercise: CachedSessionExercise = {
+          id: tempSessionExerciseId,
+          session_id: sessionId,
+          exercise_id: exercise.id,
+          rpe: null,
+          rpe_display: null,
+          active_set_index: 1,
+          sort_order: maxOrder + 1,
+          exercise: {
+            id: exercise.id,
+            name: exercise.name,
+            type: exercise.type,
+            increment_kind: exercise.increment_kind,
+            increment_value: exercise.increment_value,
+          },
+          sets: tempSets,
+        };
+        
+        // Apply optimistic update immediately
+        addExerciseOptimistic(optimisticExercise);
+        
+        // Then sync to database in background
+        addExercise({ exerciseId: exercise.id, initialSets })
+          .then((serverExercise) => {
+            // Update cache with real server IDs after success
+            if (serverExercise && serverExercise.id !== tempSessionExerciseId) {
+              queryClient.invalidateQueries({ queryKey: queryKeys.sessions.fullCache(sessionId) });
+            }
+          })
+          .catch((error) => {
+            console.error('Failed to add exercise:', error);
+            toast.error(locale === 'ru' ? 'Ошибка добавления' : 'Failed to add');
+            // Rollback optimistic update
+            queryClient.invalidateQueries({ queryKey: queryKeys.sessions.fullCache(sessionId) });
+          });
+        
         toast.success(locale === 'ru' ? 'Упражнение добавлено' : 'Exercise added');
       }
       
@@ -733,7 +784,8 @@ export default function Workout() {
     try {
       const newDraft = await startNewWorkout('empty');
       if (newDraft?.session_id) {
-        // Session is now active, component will re-render with activeSessionId
+        // Initialize the session cache immediately for instant exercise opening
+        initializeEmptySession(newDraft.session_id, 'empty');
       }
     } catch (error) {
       console.error('Failed to create session:', error);

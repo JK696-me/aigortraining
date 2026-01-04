@@ -84,6 +84,10 @@ export default function Exercise() {
   const [showLastSetDialog, setShowLastSetDialog] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   
+  // Timeout state for exercise not found
+  const [loadTimeout, setLoadTimeout] = useState(false);
+  const loadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Anti-duplicate modal: track which set we last showed modal for
   const lastModalShownForRef = useRef<{ sessionExerciseId: string; setIndex: number } | null>(null);
   
@@ -267,6 +271,45 @@ export default function Exercise() {
       setRenderActiveSetIndex(0);
     }
   }, [sessionExerciseId, cachedExercise, cachedSets]);
+
+  // Timeout for exercise not found - show error after 800ms
+  useEffect(() => {
+    if (!sessionExerciseId) return;
+    
+    // Clear timeout when exercise is found
+    if (cachedExercise) {
+      setLoadTimeout(false);
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
+      return;
+    }
+    
+    // Set timeout to show error if exercise not found
+    loadTimeoutRef.current = setTimeout(() => {
+      if (!cachedExercise) {
+        setLoadTimeout(true);
+      }
+    }, 800);
+    
+    return () => {
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
+    };
+  }, [sessionExerciseId, cachedExercise]);
+
+  // Retry handler for error state
+  const handleRetryLoad = useCallback(() => {
+    setLoadTimeout(false);
+    // Refetch the session cache
+    if (activeSessionId) {
+      // Trigger a refetch by navigating back and forth or refetching
+      window.location.reload();
+    }
+  }, [activeSessionId]);
 
   // Unified method to set active set - updates cache optimistically + persists to DB
   const setActiveSet = useCallback((arrayIndex: number, setIndex: number) => {
@@ -798,6 +841,39 @@ export default function Exercise() {
     triggerPreviewUpdate();
     toast.success(locale === 'ru' ? 'Все подходы заполнены' : 'All sets filled');
   }, [currentSet, sessionExerciseId, weightValue, repsValue, sets, updateSetOptimistic, triggerPreviewUpdate, locale]);
+
+  // Error state - exercise not found after timeout
+  if (loadTimeout && !cachedExercise) {
+    return (
+      <Layout>
+        <div className="px-4 pt-12 safe-top flex flex-col items-center justify-center min-h-[60vh] gap-4">
+          <div className="text-center">
+            <h2 className="text-lg font-semibold text-foreground mb-2">
+              {locale === 'ru' ? 'Не удалось открыть упражнение' : 'Failed to open exercise'}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {locale === 'ru' 
+                ? 'Упражнение не найдено в кэше' 
+                : 'Exercise not found in cache'}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => navigate('/workout')}
+            >
+              {locale === 'ru' ? 'Вернуться' : 'Go back'}
+            </Button>
+            <Button
+              onClick={handleRetryLoad}
+            >
+              {locale === 'ru' ? 'Повторить' : 'Retry'}
+            </Button>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   if (!sessionExerciseId || !sessionExercise) {
     return (
