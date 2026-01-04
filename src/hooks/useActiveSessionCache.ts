@@ -50,9 +50,12 @@ interface ActiveSessionCache {
   updateExerciseOptimistic: (sessionExerciseId: string, updates: Partial<Pick<CachedSessionExercise, 'rpe' | 'active_set_index' | 'rpe_display'>>) => void;
   addSetOptimistic: (sessionExerciseId: string, newSet: CachedSet) => void;
   deleteSetOptimistic: (sessionExerciseId: string, setId: string) => void;
+  addExerciseOptimistic: (newExercise: CachedSessionExercise) => void;
+  deleteExerciseOptimistic: (sessionExerciseId: string) => void;
   replaceExerciseOptimistic: (sessionExerciseId: string, newExerciseId: string, exerciseInfo: CachedSessionExercise['exercise'], newSets: CachedSet[]) => void;
   updateExerciseSortOrderOptimistic: (updates: { id: string; sort_order: number }[]) => void;
   updateRpeDisplayOptimistic: (sessionExerciseId: string, rpeDisplay: number | null) => void;
+  initializeEmptySession: (sessionId: string, source?: string, templateId?: string | null) => void;
   refetch: () => void;
 }
 
@@ -257,6 +260,39 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     );
   }, [queryClient, cacheKey]);
 
+  // Add exercise optimistically
+  const addExerciseOptimistic = useCallback((newExercise: CachedSessionExercise) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) {
+        // Create a new session cache if it doesn't exist
+        return {
+          id: newExercise.session_id,
+          status: 'draft',
+          source: 'empty',
+          template_id: null,
+          exercises: [newExercise],
+        };
+      }
+
+      return {
+        ...old,
+        exercises: [...old.exercises, newExercise].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+      };
+    });
+  }, [queryClient, cacheKey]);
+
+  // Delete exercise optimistically
+  const deleteExerciseOptimistic = useCallback((sessionExerciseId: string) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      return {
+        ...old,
+        exercises: old.exercises.filter(e => e.id !== sessionExerciseId),
+      };
+    });
+  }, [queryClient, cacheKey]);
+
   // Replace exercise optimistically (in-place update)
   const replaceExerciseOptimistic = useCallback((
     sessionExerciseId: string,
@@ -334,6 +370,22 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     });
   }, [queryClient, cacheKey]);
 
+  // Initialize an empty session in the cache (for new workouts)
+  const initializeEmptySession = useCallback((
+    newSessionId: string,
+    source: string = 'empty',
+    templateId: string | null = null
+  ) => {
+    const newCacheKey = queryKeys.sessions.fullCache(newSessionId);
+    queryClient.setQueryData(newCacheKey, {
+      id: newSessionId,
+      status: 'draft',
+      source,
+      template_id: templateId,
+      exercises: [],
+    });
+  }, [queryClient]);
+
   return {
     session,
     isLoading,
@@ -344,9 +396,12 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     updateExerciseOptimistic,
     addSetOptimistic,
     deleteSetOptimistic,
+    addExerciseOptimistic,
+    deleteExerciseOptimistic,
     replaceExerciseOptimistic,
     updateExerciseSortOrderOptimistic,
     updateRpeDisplayOptimistic,
+    initializeEmptySession,
     refetch,
   };
 }
