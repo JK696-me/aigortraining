@@ -577,7 +577,7 @@ export default function Workout() {
         }
       );
       
-      // Brief success state, then navigate
+      // Brief success state, then clear overlay (NO auto-navigate)
       setTimeout(() => {
         setCompletionStatus(null);
         setCompletionStep(1);
@@ -597,7 +597,7 @@ export default function Workout() {
           }
         );
         
-        navigate('/');
+        // NO navigate('/') - let user stay on current screen
       }, 300);
     } else {
       // Timeout or error - treat as offline, queue for later sync
@@ -618,7 +618,7 @@ export default function Workout() {
         setCompletionStatus(null);
         setCompletionStep(1);
         completionRequestIdRef.current = null;
-        navigate('/');
+        // NO navigate('/') - let user stay on current screen
       }, 800);
     }
   }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate, queryClient, sessionMetadata, sessionExercises]);

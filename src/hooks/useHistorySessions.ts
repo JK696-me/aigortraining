@@ -16,6 +16,7 @@ export interface SessionListItem {
   template_name: string | null
   exercise_count: number
   set_count: number
+  _pending?: boolean  // True if optimistically added, waiting for server sync
 }
 
 // Full session details for detail view
@@ -55,7 +56,7 @@ export function useCompletedSessionsList() {
           workout_templates(name)
         `)
         .eq('user_id', user.id)
-        .eq('status', 'completed')
+        .in('status', ['completed', 'completed_pending']) // Include both statuses
         .order('completed_at', { ascending: false })
         .limit(PAGE_SIZE)
 
@@ -130,8 +131,40 @@ export function useCompletedSessionsList() {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     initialPageParam: null as string | null,
     enabled: !!user,
-    staleTime: CACHE_TTL.SHORT,
-    gcTime: CACHE_TTL.SHORT * 2,
+    staleTime: CACHE_TTL.MEDIUM, // Use MEDIUM to reduce aggressive refetching
+    gcTime: CACHE_TTL.MEDIUM * 2,
+    // Merge strategy: preserve _pending items that aren't in server response yet
+    structuralSharing: (oldData, newData) => {
+      if (!oldData || !newData) return newData as typeof oldData;
+      
+      const typedOld = oldData as { pages: { data: SessionListItem[]; nextCursor: string | null }[]; pageParams: (string | null)[] };
+      const typedNew = newData as { pages: { data: SessionListItem[]; nextCursor: string | null }[]; pageParams: (string | null)[] };
+      
+      // Get all pending items from old data
+      const pendingItems = typedOld.pages
+        .flatMap(p => p.data)
+        .filter(s => s._pending);
+      
+      if (pendingItems.length === 0) return newData as typeof oldData;
+      
+      // Get all IDs from new data
+      const newIds = new Set(typedNew.pages.flatMap(p => p.data.map(s => s.id)));
+      
+      // Keep pending items that aren't in server response yet
+      const pendingToKeep = pendingItems.filter(p => !newIds.has(p.id));
+      
+      if (pendingToKeep.length === 0) return newData as typeof oldData;
+      
+      // Prepend pending items to first page
+      return {
+        ...typedNew,
+        pages: typedNew.pages.map((page, idx) => 
+          idx === 0 
+            ? { ...page, data: [...pendingToKeep, ...page.data] }
+            : page
+        ),
+      } as typeof oldData;
+    },
   })
 
   const deleteSession = useMutation({
