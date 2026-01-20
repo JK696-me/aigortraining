@@ -25,6 +25,8 @@ export const queryKeys = {
     state: (exerciseId: string) => ['exercise-state', exerciseId] as const,
     history: (exerciseId: string) => ['exercise-history', exerciseId] as const,
     lastPerformance: (exerciseId: string) => ['exercise-last-performance', exerciseId] as const,
+    lastExercisePerformance: (userId: string, exerciseId: string, normalizedName: string) =>
+      ['last-exercise-performance', userId, exerciseId, normalizedName] as const,
   },
   
   // Templates
