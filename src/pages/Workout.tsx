@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { useActiveSessionCache, CachedSet, CachedSessionExercise } from "@/hooks/useActiveSessionCache";
+import { fetchLastPerformance } from "@/hooks/useLastPerformance";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -209,7 +210,7 @@ export default function Workout() {
   };
 
   const handleSelectExercise = async (exercise: Exercise) => {
-    if (!sessionId) return;
+    if (!sessionId || !user) return;
 
     try {
       const { data: exerciseState } = await supabase
@@ -220,42 +221,36 @@ export default function Workout() {
 
       const setsCount = exerciseState?.current_sets || 3;
 
-      const { data: lastSessionExercise } = await supabase
-        .from('session_exercises')
-        .select(`
-          id,
-          session:sessions!inner(status)
-        `)
-        .eq('exercise_id', exercise.id)
-        .eq('sessions.status', 'completed')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Fetch last performance data (all sets from last completed workout)
+      const lastPerformance = await fetchLastPerformance(exercise.id, user.id);
 
+      // Default values
       let lastWeight = 0;
       let lastReps = exercise.type <= 2 ? 6 : 10;
 
-      if (lastSessionExercise) {
-        const { data: sets } = await supabase
-          .from('sets')
-          .select('weight, reps')
-          .eq('session_exercise_id', lastSessionExercise.id)
-          .order('set_index')
-          .limit(1);
-
-        if (sets && sets.length > 0) {
-          lastWeight = sets[0].weight;
-          lastReps = sets[0].reps;
-        }
+      if (lastPerformance && lastPerformance.sets.length > 0) {
+        // Use first set values as defaults for new sets
+        lastWeight = lastPerformance.sets[0].weight;
+        lastReps = lastPerformance.sets[0].reps;
       }
 
-      const initialSets = Array.from({ length: setsCount }, () => ({
-        weight: lastWeight,
-        reps: lastReps,
-      }));
+      // Build initial sets with prev_* fields for each set
+      const initialSets = Array.from({ length: setsCount }, (_, index) => {
+        const setIndex = index + 1;
+        const prevSet = lastPerformance?.sets.find(s => s.set_index === setIndex);
+        
+        return {
+          weight: pickerMode === 'replace' ? (prevSet?.weight ?? lastWeight) : lastWeight,
+          reps: pickerMode === 'replace' ? (prevSet?.reps ?? lastReps) : lastReps,
+          prev_weight: prevSet?.weight ?? null,
+          prev_reps: prevSet?.reps ?? null,
+          prev_rpe: prevSet?.rpe ?? null,
+        };
+      });
 
       if (pickerMode === 'replace' && replacingExerciseId) {
         // Optimistic update: immediately update the cache before DB sync
+        // For replace mode, fill current values from previous + also store prev_*
         const tempSets: CachedSet[] = initialSets.map((set, index) => ({
           id: crypto.randomUUID(),
           session_exercise_id: replacingExerciseId,
@@ -264,6 +259,9 @@ export default function Workout() {
           reps: set.reps,
           is_completed: false,
           rpe: null,
+          prev_weight: set.prev_weight,
+          prev_reps: set.prev_reps,
+          prev_rpe: set.prev_rpe,
         }));
         
         const exerciseInfo = {
@@ -291,6 +289,7 @@ export default function Workout() {
         setReplacingExerciseId(null);
       } else {
         // Optimistic update for adding new exercise
+        // For add mode: current values stay 0/default, only fill prev_* for comparison
         const tempSessionExerciseId = crypto.randomUUID();
         const maxOrder = sessionExercises.length > 0 
           ? Math.max(...sessionExercises.map(e => e.sort_order ?? 0)) 
@@ -300,10 +299,13 @@ export default function Workout() {
           id: crypto.randomUUID(),
           session_exercise_id: tempSessionExerciseId,
           set_index: index + 1,
-          weight: set.weight,
-          reps: set.reps,
+          weight: lastWeight, // Use last weight from previous workout for convenience
+          reps: lastReps, // Use last reps from previous workout for convenience
           is_completed: false,
           rpe: null,
+          prev_weight: set.prev_weight,
+          prev_reps: set.prev_reps,
+          prev_rpe: set.prev_rpe,
         }));
         
         const optimisticExercise: CachedSessionExercise = {

@@ -1160,6 +1160,9 @@ export default function Exercise() {
                 }}
                 kgLabel={t('kg')}
                 setLabel={t('set')}
+                prevWeight={set.prev_weight}
+                prevReps={set.prev_reps}
+                prevRpe={set.prev_rpe}
               />
             ))}
           </div>
