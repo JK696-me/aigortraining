@@ -12,6 +12,10 @@ export interface CachedSet {
   reps: number;
   is_completed: boolean;
   rpe: number | null;
+  // Previous workout values for comparison (optional, not persisted to DB)
+  prev_weight?: number | null;
+  prev_reps?: number | null;
+  prev_rpe?: number | null;
 }
 
 export interface CachedSessionExercise {

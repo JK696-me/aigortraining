@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
+import { useLanguage } from '@/contexts/LanguageContext'
 
 interface SwipeableSetItemProps {
   setIndex: number
@@ -10,6 +11,10 @@ interface SwipeableSetItemProps {
   onDelete: () => void
   kgLabel: string
   setLabel: string
+  // Previous workout values for comparison
+  prevWeight?: number | null
+  prevReps?: number | null
+  prevRpe?: number | null
 }
 
 export function SwipeableSetItem({
@@ -21,7 +26,11 @@ export function SwipeableSetItem({
   onDelete,
   kgLabel,
   setLabel,
+  prevWeight,
+  prevReps,
+  prevRpe,
 }: SwipeableSetItemProps) {
+  const { locale } = useLanguage()
   const containerRef = useRef<HTMLDivElement>(null)
   const [translateX, setTranslateX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -71,6 +80,9 @@ export function SwipeableSetItem({
     onSelect()
   }
 
+  // Check if we have previous data to show
+  const hasPrevData = prevWeight != null && prevReps != null
+
   return (
     <div className="relative overflow-hidden rounded-lg">
       {/* Delete button background */}
@@ -93,7 +105,16 @@ export function SwipeableSetItem({
         onTouchEnd={handleTouchEnd}
         onClick={handleClick}
       >
-        <span className="text-sm text-muted-foreground">{setLabel} {setIndex}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm text-muted-foreground">{setLabel} {setIndex}</span>
+          {/* Previous workout hint */}
+          {hasPrevData && (
+            <span className="text-[10px] text-muted-foreground/70">
+              {locale === 'ru' ? 'Прошлый' : 'Previous'}: {prevWeight}{kgLabel}×{prevReps}
+              {prevRpe != null && `, RPE ${prevRpe}`}
+            </span>
+          )}
+        </div>
         <span className="font-mono font-medium text-foreground">
           {weight}{kgLabel} × {reps}
         </span>
