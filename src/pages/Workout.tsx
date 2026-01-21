@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { useActiveSessionCache, CachedSet, CachedSessionExercise } from "@/hooks/useActiveSessionCache";
-import { fetchLastPerformance } from "@/hooks/useLastPerformance";
+import { fetchLastPerformanceWithFallback } from "@/hooks/useLastPerformance";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -221,8 +221,14 @@ export default function Workout() {
 
       const setsCount = exerciseState?.current_sets || 3;
 
-      // Fetch last performance data (all sets from last completed workout)
-      const lastPerformance = await fetchLastPerformance(exercise.id, user.id);
+      // Fetch last performance data with fallback by name
+      const lastPerformance = await fetchLastPerformanceWithFallback({
+        userId: user.id,
+        exerciseId: exercise.id,
+        exerciseName: exercise.name,
+        activeSessionId: sessionId,
+        isDebug: false,
+      });
 
       // Default values
       let lastWeight = 0;
