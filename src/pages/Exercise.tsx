@@ -17,6 +17,8 @@ import { RecommendationExplainer, ExplanationDetails } from "@/components/Recomm
 import { ExerciseSwitcher, ExerciseSwitcherItem } from "@/components/ExerciseSwitcher";
 import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
+import { useQueryClient } from '@tanstack/react-query';
+import { getLastExercisePerformance, LastExercisePerformanceResult } from '@/lib/lastExercisePerformance';
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -55,6 +57,7 @@ export default function Exercise() {
   const { t, locale } = useLanguage();
   const { user } = useAuth();
   const { activeSessionId } = useWorkout();
+  const queryClient = useQueryClient();
   
   // Use centralized cache for the active session
   const { 
@@ -109,6 +112,10 @@ export default function Exercise() {
   
   // RPE highlight state
   const [rpeHighlight, setRpeHighlight] = useState(false);
+  
+  // Auto-fill tracking: prevent re-filling after user started editing
+  const autoFilledExercisesRef = useRef<Set<string>>(new Set());
+  const [isAutoFilling, setIsAutoFilling] = useState(false);
   
   const repsInputRef = useRef<HTMLInputElement>(null);
   const weightInputRef = useRef<HTMLInputElement>(null);
@@ -408,6 +415,91 @@ export default function Exercise() {
   const triggerPreviewUpdate = useCallback(() => {
     setPreviewTrigger(prev => prev + 1);
   }, []);
+
+  // Auto-fill from previous workout when opening exercise (if sets are empty)
+  useEffect(() => {
+    if (!sessionExerciseId || !user || !cachedExercise?.exercise) return;
+    if (isAutoFilling) return;
+    
+    // Skip if already auto-filled this exercise
+    if (autoFilledExercisesRef.current.has(sessionExerciseId)) return;
+    
+    // Check if all sets are "empty" (weight=0 AND reps=0)
+    const allSetsEmpty = sets.every(s => s.weight === 0 && s.reps === 0);
+    if (!allSetsEmpty || sets.length === 0) {
+      // User has already entered data, don't auto-fill
+      autoFilledExercisesRef.current.add(sessionExerciseId);
+      return;
+    }
+    
+    // Auto-fill from previous workout
+    const doAutoFill = async () => {
+      setIsAutoFilling(true);
+      try {
+        const lastPerformance = await getLastExercisePerformance({
+          userId: user.id,
+          exerciseId: cachedExercise.exercise_id,
+          exerciseName: cachedExercise.exercise.name,
+          activeSessionId,
+          queryClient,
+          isDebug: true,
+        });
+        
+        if (!lastPerformance || lastPerformance.sets.length === 0) {
+          autoFilledExercisesRef.current.add(sessionExerciseId);
+          return;
+        }
+        
+        // Optimistic update: fill current sets with prev values
+        const setIdsToUpdate: string[] = [];
+        const updates: { id: string; weight: number; reps: number; rpe: number | null }[] = [];
+        
+        for (const currentSetItem of sets) {
+          const prevSet = lastPerformance.sets.find(s => s.set_index === currentSetItem.set_index);
+          if (prevSet) {
+            updateSetOptimistic(sessionExerciseId, currentSetItem.id, {
+              weight: prevSet.weight,
+              reps: prevSet.reps,
+              rpe: prevSet.rpe,
+              prev_weight: prevSet.weight,
+              prev_reps: prevSet.reps,
+              prev_rpe: prevSet.rpe,
+            });
+            setIdsToUpdate.push(currentSetItem.id);
+            updates.push({
+              id: currentSetItem.id,
+              weight: prevSet.weight,
+              reps: prevSet.reps,
+              rpe: prevSet.rpe,
+            });
+          }
+        }
+        
+        // Bulk update to DB
+        if (updates.length > 0) {
+          // Use individual updates since Supabase doesn't support bulk update with different values
+          await Promise.all(
+            updates.map(u => 
+              supabase.from('sets').update({ 
+                weight: u.weight, 
+                reps: u.reps, 
+                rpe: u.rpe 
+              }).eq('id', u.id)
+            )
+          );
+          triggerPreviewUpdate();
+        }
+        
+        autoFilledExercisesRef.current.add(sessionExerciseId);
+      } catch (error) {
+        console.error('Auto-fill failed:', error);
+      } finally {
+        setIsAutoFilling(false);
+      }
+    };
+    
+    doAutoFill();
+  }, [sessionExerciseId, user, cachedExercise, sets, activeSessionId, queryClient, updateSetOptimistic, triggerPreviewUpdate, isAutoFilling]);
 
   // Update local values when set changes
   const currentSet = selectedSetIndex !== null ? sets[selectedSetIndex] : undefined;
@@ -747,60 +839,77 @@ export default function Exercise() {
     }
   };
 
-  // Copy last attempt
+  // Copy last attempt - uses getLastExercisePerformance with fallback by name
   const handleCopyLastAttempt = async () => {
-    if (!sessionExercise?.exercise?.id || !user) return;
+    if (!sessionExercise?.exercise?.id || !sessionExercise?.exercise?.name || !user || !sessionExerciseId) return;
     
     try {
-      // Find the last completed session with this exercise
-      const { data: lastSessionExercise } = await supabase
-        .from('session_exercises')
-        .select(`
-          id,
-          session:sessions!inner(id, status, completed_at)
-        `)
-        .eq('exercise_id', sessionExercise.exercise.id)
-        .eq('sessions.status', 'completed')
-        .neq('id', sessionExerciseId) // Exclude current
-        .order('sessions(completed_at)', { ascending: false })
-        .limit(1)
-        .single();
+      // Use unified function with fallback by name
+      const lastPerformance = await getLastExercisePerformance({
+        userId: user.id,
+        exerciseId: sessionExercise.exercise.id,
+        exerciseName: sessionExercise.exercise.name,
+        activeSessionId,
+        queryClient,
+        isDebug: true,
+      });
       
-      if (!lastSessionExercise) {
-        toast.error('Нет предыдущих тренировок');
+      if (!lastPerformance || lastPerformance.sets.length === 0) {
+        toast.error(locale === 'ru' ? 'Нет предыдущих тренировок для этого упражнения' : 'No previous workouts for this exercise');
         return;
       }
       
-      // Get sets from last session
-      const { data: lastSets } = await supabase
-        .from('sets')
-        .select('weight, reps, set_index')
-        .eq('session_exercise_id', lastSessionExercise.id)
-        .order('set_index');
+      // Optimistic update + collect for bulk DB update
+      const updates: { id: string; weight: number; reps: number; rpe: number | null }[] = [];
       
-      if (!lastSets || lastSets.length === 0) {
-        toast.error('Нет данных о подходах');
-        return;
-      }
-      
-      // Update current sets with last session's values
       for (const currentSetItem of sets) {
-        const lastSet = lastSets.find(s => s.set_index === currentSetItem.set_index);
-        if (lastSet) {
-          await supabase
-            .from('sets')
-            .update({ weight: lastSet.weight, reps: lastSet.reps })
-            .eq('id', currentSetItem.id);
+        const prevSet = lastPerformance.sets.find(s => s.set_index === currentSetItem.set_index);
+        if (prevSet) {
+          // Optimistic update
+          updateSetOptimistic(sessionExerciseId, currentSetItem.id, {
+            weight: prevSet.weight,
+            reps: prevSet.reps,
+            rpe: prevSet.rpe,
+            prev_weight: prevSet.weight,
+            prev_reps: prevSet.reps,
+            prev_rpe: prevSet.rpe,
+          });
+          updates.push({
+            id: currentSetItem.id,
+            weight: prevSet.weight,
+            reps: prevSet.reps,
+            rpe: prevSet.rpe,
+          });
         }
       }
       
-      // Refetch sets
-      refetchSets();
+      // Bulk update to DB (parallel)
+      if (updates.length > 0) {
+        await Promise.all(
+          updates.map(u => 
+            supabase.from('sets').update({ 
+              weight: u.weight, 
+              reps: u.reps, 
+              rpe: u.rpe 
+            }).eq('id', u.id)
+          )
+        );
+      }
+      
+      // Update local input values to match first set
+      if (updates.length > 0 && selectedSetIndex !== null) {
+        const updatedCurrentSet = updates.find((_, idx) => idx === selectedSetIndex);
+        if (updatedCurrentSet) {
+          setWeightValue(updatedCurrentSet.weight.toString());
+          setRepsValue(updatedCurrentSet.reps.toString());
+        }
+      }
+      
       triggerPreviewUpdate();
-      toast.success('Скопировано из прошлой тренировки');
+      toast.success(locale === 'ru' ? 'Скопировано из прошлой тренировки' : 'Copied from previous workout');
     } catch (error) {
       console.error('Failed to copy last attempt:', error);
-      toast.error('Ошибка копирования');
+      toast.error(locale === 'ru' ? 'Ошибка копирования' : 'Copy failed');
     }
   };
 
