@@ -349,11 +349,13 @@ export type Database = {
       }
       sessions: {
         Row: {
+          auto_completed: boolean
           completed_at: string | null
           created_at: string
           date: string
           elapsed_seconds: number | null
           id: string
+          last_activity_at: string | null
           source: string
           started_at: string | null
           status: string
@@ -365,11 +367,13 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_completed?: boolean
           completed_at?: string | null
           created_at?: string
           date: string
           elapsed_seconds?: number | null
           id?: string
+          last_activity_at?: string | null
           source: string
           started_at?: string | null
           status?: string
@@ -381,11 +385,13 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_completed?: boolean
           completed_at?: string | null
           created_at?: string
           date?: string
           elapsed_seconds?: number | null
           id?: string
+          last_activity_at?: string | null
           source?: string
           started_at?: string | null
           status?: string
