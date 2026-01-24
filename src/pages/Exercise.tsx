@@ -19,6 +19,7 @@ import { format } from 'date-fns';
 import { ru, enUS } from 'date-fns/locale';
 import { useQueryClient } from '@tanstack/react-query';
 import { getLastExercisePerformance, LastExercisePerformanceResult } from '@/lib/lastExercisePerformance';
+import { useTouchSessionActivity } from '@/hooks/useTouchSessionActivity';
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -57,6 +58,7 @@ export default function Exercise() {
   const { t, locale } = useLanguage();
   const { user } = useAuth();
   const { activeSessionId } = useWorkout();
+  const { touch } = useTouchSessionActivity({ sessionId: activeSessionId });
   const queryClient = useQueryClient();
   
   // Use centralized cache for the active session
@@ -137,6 +139,8 @@ export default function Exercise() {
   // Wrapper functions for updateSet/addSet/deleteSet with optimistic updates
   const updateSet = useCallback(({ setId, updates }: { setId: string; updates: Partial<CachedSet> }) => {
     if (!sessionExerciseId) return;
+
+    touch();
     
     // Optimistic update
     updateSetOptimistic(sessionExerciseId, setId, updates);
@@ -146,10 +150,12 @@ export default function Exercise() {
       .from('sets')
       .update(updates)
       .eq('id', setId);
-  }, [sessionExerciseId, updateSetOptimistic]);
+  }, [sessionExerciseId, updateSetOptimistic, touch]);
   
   const addSet = useCallback(({ weight, reps }: { weight: number; reps: number }) => {
     if (!sessionExerciseId) return;
+
+    touch();
     
     const nextIndex = sets.length > 0 ? Math.max(...sets.map(s => s.set_index)) + 1 : 1;
     const tempId = crypto.randomUUID();
@@ -185,10 +191,12 @@ export default function Exercise() {
           addSetOptimistic(sessionExerciseId, data as CachedSet);
         }
       });
-  }, [sessionExerciseId, sets, addSetOptimistic, deleteSetOptimistic]);
+  }, [sessionExerciseId, sets, addSetOptimistic, deleteSetOptimistic, touch]);
   
   const deleteSet = useCallback((setId: string) => {
     if (!sessionExerciseId) return;
+
+    touch();
     
     // Optimistic delete
     deleteSetOptimistic(sessionExerciseId, setId);
@@ -198,7 +206,7 @@ export default function Exercise() {
       .from('sets')
       .delete()
       .eq('id', setId);
-  }, [sessionExerciseId, deleteSetOptimistic]);
+  }, [sessionExerciseId, deleteSetOptimistic, touch]);
   
   // refetchSets is now a no-op since we use optimistic updates
   const refetchSets = useCallback(() => {
@@ -321,6 +329,8 @@ export default function Exercise() {
   // Unified method to set active set - updates cache optimistically + persists to DB
   const setActiveSet = useCallback((arrayIndex: number, setIndex: number) => {
     if (!sessionExerciseId) return;
+
+    touch();
     
     // 1. Update local render state immediately
     setRenderActiveSetIndex(arrayIndex);
@@ -333,7 +343,7 @@ export default function Exercise() {
       .from('session_exercises')
       .update({ active_set_index: setIndex })
       .eq('id', sessionExerciseId);
-  }, [sessionExerciseId, updateExerciseOptimistic]);
+  }, [sessionExerciseId, updateExerciseOptimistic, touch]);
   
   // Wrapper for external callers that only know array index
   const setSelectedSetIndex = useCallback((arrayIndex: number) => {
@@ -478,6 +488,7 @@ export default function Exercise() {
         // Bulk update to DB
         if (updates.length > 0) {
           // Use individual updates since Supabase doesn't support bulk update with different values
+          touch();
           await Promise.all(
             updates.map(u => 
               supabase.from('sets').update({ 
@@ -678,6 +689,7 @@ export default function Exercise() {
     updateRpeDisplayOptimistic(sessionExerciseId, rpeDisplay);
     
     // Persist to DB (both set rpe and session_exercise rpe_display)
+    touch();
     await Promise.all([
       supabase.from('sets').update({ rpe }).eq('id', currentSet.id),
       supabase.from('session_exercises').update({ rpe_display: rpeDisplay }).eq('id', sessionExerciseId),
@@ -885,6 +897,7 @@ export default function Exercise() {
       
       // Bulk update to DB (parallel)
       if (updates.length > 0) {
+        touch();
         await Promise.all(
           updates.map(u => 
             supabase.from('sets').update({ 
@@ -936,6 +949,7 @@ export default function Exercise() {
     }
     
     // Single bulk update to DB
+    touch();
     const { error } = await supabase
       .from('sets')
       .update({ weight, reps, rpe })

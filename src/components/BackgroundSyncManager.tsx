@@ -1,13 +1,18 @@
 import { useEffect, useRef } from "react";
 import { usePendingCompletionSync } from "@/hooks/usePendingCompletionSync";
+import { useSessionOutboxSync } from "@/hooks/useSessionOutboxSync";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
 import { useIntro } from "@/contexts/IntroContext";
 import { useTour } from "@/contexts/TourContext";
+import { SessionLifecycleManager } from "@/components/SessionLifecycleManager";
 
 // This component runs background sync tasks for authenticated users
 export function BackgroundSyncManager() {
   // Auto-sync pending workout completions when network is restored
   usePendingCompletionSync();
+
+  // Unified outbox sync: session activity + auto-complete
+  useSessionOutboxSync();
   
   // Unified app initialization: seeding + intro
   const { showIntro, completeIntro } = useAppInitialization();
@@ -33,5 +38,5 @@ export function BackgroundSyncManager() {
     wasActiveRef.current = isTourActive;
   }, [isTourActive, setIntroOpen, completeIntro, dismissOnEnd]);
   
-  return null;
+  return <SessionLifecycleManager />;
 }
