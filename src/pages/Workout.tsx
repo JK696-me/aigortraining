@@ -22,6 +22,7 @@ import { useWorkout } from "@/contexts/WorkoutContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { SessionListItem } from "@/hooks/useHistorySessions";
+import { useTouchSessionActivity } from '@/hooks/useTouchSessionActivity';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,6 +78,7 @@ export default function Workout() {
   } = useWorkout();
   
   const sessionId = activeSessionId;
+  const { touch } = useTouchSessionActivity({ sessionId });
   
   const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
   const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession } = useActiveSessionCache(sessionId);
@@ -165,6 +167,12 @@ export default function Workout() {
     fetchSessionData();
   }, [sessionId]);
 
+  // Initialize last_activity_at when draft becomes active
+  useEffect(() => {
+    if (!sessionId) return;
+    touch();
+  }, [sessionId, touch]);
+
   // Server-based timer calculation
   useEffect(() => {
     if (!timerData) return;
@@ -211,6 +219,8 @@ export default function Workout() {
 
   const handleSelectExercise = async (exercise: Exercise) => {
     if (!sessionId || !user) return;
+
+    touch();
 
     try {
       const { data: exerciseState } = await supabase
@@ -369,6 +379,8 @@ export default function Workout() {
 
   const handleConfirmDelete = async () => {
     if (!exerciseToDelete) return;
+
+    touch();
     
     try {
       await deleteExercise(exerciseToDelete.id);
@@ -388,6 +400,7 @@ export default function Workout() {
   };
 
   const handleReorderExercises = async (newOrder: { id: string; sort_order: number }[]) => {
+    touch();
     // Optimistic update: immediately update the cache
     updateExerciseSortOrderOptimistic(newOrder);
     // Then sync to database

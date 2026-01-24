@@ -410,6 +410,13 @@ export default function ExerciseHistory() {
                           {locale === 'ru' ? 'Синхронизация…' : 'Syncing…'}
                         </span>
                       )}
+
+                      {/* Auto-completed badge */}
+                      {((session as SessionListItem & { _auto_completed?: boolean })._auto_completed || session.auto_completed) && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-accent/10 text-accent text-xs font-medium">
+                          {locale === 'ru' ? 'Автозавершено' : 'Auto'}
+                        </span>
+                      )}
                     </div>
                     {session.template_name && (
                       <p className="text-sm text-primary truncate">{session.template_name}</p>

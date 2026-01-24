@@ -14,6 +14,7 @@ export interface SessionListItem {
   source: string
   template_id: string | null
   template_name: string | null
+  auto_completed?: boolean
   exercise_count: number
   set_count: number
   _pending?: boolean  // True if optimistically added, waiting for server sync
@@ -53,6 +54,7 @@ export function useCompletedSessionsList() {
           undo_available_until,
           source,
           template_id,
+          auto_completed,
           workout_templates(name)
         `)
         .eq('user_id', user.id)
@@ -118,6 +120,7 @@ export function useCompletedSessionsList() {
         source: session.source,
         template_id: session.template_id,
         template_name: (session.workout_templates as any)?.name || null,
+        auto_completed: (session as any).auto_completed ?? false,
         exercise_count: exerciseCountMap.get(session.id) || 0,
         set_count: setCountMap.get(session.id) || 0,
       }))

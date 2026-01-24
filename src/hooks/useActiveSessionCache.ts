@@ -39,8 +39,11 @@ export interface CachedSessionExercise {
 export interface CachedSession {
   id: string;
   status: string;
+  date: string;
   source: string;
   template_id: string | null;
+  last_activity_at: string | null;
+  auto_completed: boolean;
   exercises: CachedSessionExercise[];
 }
 
@@ -50,6 +53,8 @@ interface ActiveSessionCache {
   isFetching: boolean;
   getExercise: (sessionExerciseId: string) => CachedSessionExercise | undefined;
   getSets: (sessionExerciseId: string) => CachedSet[];
+  touchSessionActivityOptimistic: (lastActivityAt: string) => void;
+  setSessionStatusOptimistic: (updates: Partial<Pick<CachedSession, 'status' | 'auto_completed' | 'last_activity_at'>>) => void;
   updateSetOptimistic: (sessionExerciseId: string, setId: string, updates: Partial<CachedSet>) => void;
   updateExerciseOptimistic: (sessionExerciseId: string, updates: Partial<Pick<CachedSessionExercise, 'rpe' | 'active_set_index' | 'rpe_display'>>) => void;
   addSetOptimistic: (sessionExerciseId: string, newSet: CachedSet) => void;
@@ -77,7 +82,7 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
       // Fetch session
       const { data: sessionData, error: sessionError } = await supabase
         .from('sessions')
-        .select('id, status, source, template_id')
+        .select('id, status, date, source, template_id, last_activity_at, auto_completed')
         .eq('id', sessionId)
         .single();
 
@@ -134,8 +139,11 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
       return {
         id: sessionData.id,
         status: sessionData.status,
+        date: sessionData.date,
         source: sessionData.source,
         template_id: sessionData.template_id,
+        last_activity_at: sessionData.last_activity_at,
+        auto_completed: sessionData.auto_completed ?? false,
         exercises,
       };
     },
@@ -155,6 +163,25 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
   const getSets = useCallback((sessionExerciseId: string): CachedSet[] => {
     return session?.exercises.find(e => e.id === sessionExerciseId)?.sets || [];
   }, [session]);
+
+  const touchSessionActivityOptimistic = useCallback((lastActivityAt: string) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+      return {
+        ...old,
+        last_activity_at: lastActivityAt,
+      };
+    });
+  }, [queryClient, cacheKey]);
+
+  const setSessionStatusOptimistic = useCallback((
+    updates: Partial<Pick<CachedSession, 'status' | 'auto_completed' | 'last_activity_at'>>
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+      return { ...old, ...updates };
+    });
+  }, [queryClient, cacheKey]);
 
   // Optimistic update for a set
   const updateSetOptimistic = useCallback((
@@ -396,6 +423,8 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     isFetching,
     getExercise,
     getSets,
+    touchSessionActivityOptimistic,
+    setSessionStatusOptimistic,
     updateSetOptimistic,
     updateExerciseOptimistic,
     addSetOptimistic,
