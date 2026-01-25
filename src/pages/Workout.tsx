@@ -81,7 +81,7 @@ export default function Workout() {
   const { touch } = useTouchSessionActivity({ sessionId });
   
   const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
-  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession } = useActiveSessionCache(sessionId);
+  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession, syncExerciseWithServerIds, syncSetIdsForExercise } = useActiveSessionCache(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
   const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
@@ -291,11 +291,17 @@ export default function Workout() {
         // Apply optimistic update immediately
         replaceExerciseOptimistic(replacingExerciseId, exercise.id, exerciseInfo, tempSets);
         
-        // Then sync to database (in background)
+        // Then sync to database (in background) and get real set IDs
         replaceExercise({
           oldSessionExerciseId: replacingExerciseId,
           newExerciseId: exercise.id,
           initialSets,
+        }).then((serverResult) => {
+          // Sync real set IDs to cache
+          if (serverResult?.created_sets) {
+            syncSetIdsForExercise(replacingExerciseId, serverResult.created_sets);
+            console.log('[Workout] Replace: synced set IDs:', serverResult.created_sets.map(s => s.id));
+          }
         }).catch((error) => {
           console.error('Failed to replace exercise:', error);
           toast.error(locale === 'ru' ? 'Ошибка замены' : 'Failed to replace');
@@ -345,12 +351,16 @@ export default function Workout() {
         // Apply optimistic update immediately
         addExerciseOptimistic(optimisticExercise);
         
-        // Then sync to database in background
+        // Then sync to database in background and get real IDs
         addExercise({ exerciseId: exercise.id, initialSets })
           .then((serverExercise) => {
-            // Update cache with real server IDs after success
-            if (serverExercise && serverExercise.id !== tempSessionExerciseId) {
-              queryClient.invalidateQueries({ queryKey: queryKeys.sessions.fullCache(sessionId) });
+            // Update cache with real server IDs (exercise ID + set IDs)
+            if (serverExercise) {
+              const serverSets = serverExercise.created_sets || [];
+              if (serverExercise.id !== tempSessionExerciseId || serverSets.length > 0) {
+                syncExerciseWithServerIds(tempSessionExerciseId, serverExercise.id, serverSets);
+                console.log('[Workout] Add: synced IDs:', serverExercise.id, serverSets.map(s => s.id));
+              }
             }
           })
           .catch((error) => {
@@ -487,6 +497,19 @@ export default function Workout() {
       return;
     }
     completionRequestIdRef.current = requestId;
+    
+    // FLUSH DIRTY SETS BEFORE COMPLETION (anti-data-loss)
+    try {
+      const { getSetOutbox } = await import('@/lib/setOutbox');
+      const dirtyCount = getSetOutbox().length;
+      if (dirtyCount > 0) {
+        console.log('[Workout] Flushing', dirtyCount, 'dirty sets before completion');
+        // Give outbox sync a chance to flush
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (e) {
+      console.warn('[Workout] Failed to check/flush dirty sets:', e);
+    }
     
     // PHASE A: Optimistic UI update (instant)
     setCompletionStep(1);

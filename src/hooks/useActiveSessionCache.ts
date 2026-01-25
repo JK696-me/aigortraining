@@ -65,6 +65,8 @@ interface ActiveSessionCache {
   updateExerciseSortOrderOptimistic: (updates: { id: string; sort_order: number }[]) => void;
   updateRpeDisplayOptimistic: (sessionExerciseId: string, rpeDisplay: number | null) => void;
   initializeEmptySession: (sessionId: string, source?: string, templateId?: string | null) => void;
+  syncExerciseWithServerIds: (tempSessionExerciseId: string, serverSessionExerciseId: string, serverSets: { id: string; set_index: number; weight: number; reps: number }[]) => void;
+  syncSetIdsForExercise: (sessionExerciseId: string, serverSets: { id: string; set_index: number; weight: number; reps: number }[]) => void;
   refetch: () => void;
 }
 
@@ -417,6 +419,92 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     });
   }, [queryClient]);
 
+  // Sync temporary IDs with real server IDs after server response
+  const syncExerciseWithServerIds = useCallback((
+    tempSessionExerciseId: string,
+    serverSessionExerciseId: string,
+    serverSets: { id: string; set_index: number; weight: number; reps: number }[]
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      return {
+        ...old,
+        exercises: old.exercises.map(exercise => {
+          if (exercise.id !== tempSessionExerciseId) return exercise;
+
+          // Map old sets to new real IDs by set_index
+          const updatedSets = exercise.sets.map(oldSet => {
+            const serverSet = serverSets.find(s => s.set_index === oldSet.set_index);
+            if (serverSet) {
+              return {
+                ...oldSet,
+                id: serverSet.id,
+                session_exercise_id: serverSessionExerciseId,
+              };
+            }
+            return oldSet;
+          });
+
+          return {
+            ...exercise,
+            id: serverSessionExerciseId,
+            sets: updatedSets,
+          };
+        }),
+      };
+    });
+  }, [queryClient, cacheKey]);
+
+  // Sync set IDs for a specific exercise (after replace)
+  const syncSetIdsForExercise = useCallback((
+    sessionExerciseId: string,
+    serverSets: { id: string; set_index: number; weight: number; reps: number }[]
+  ) => {
+    queryClient.setQueryData(cacheKey, (old: CachedSession | null | undefined) => {
+      if (!old) return old;
+
+      return {
+        ...old,
+        exercises: old.exercises.map(exercise => {
+          if (exercise.id !== sessionExerciseId) return exercise;
+
+          // Map sets to real IDs by set_index
+          const updatedSets = exercise.sets.map(oldSet => {
+            const serverSet = serverSets.find(s => s.set_index === oldSet.set_index);
+            if (serverSet) {
+              return {
+                ...oldSet,
+                id: serverSet.id,
+              };
+            }
+            return oldSet;
+          });
+
+          return {
+            ...exercise,
+            sets: updatedSets,
+          };
+        }),
+      };
+    });
+
+    // Also update individual sets query
+    queryClient.setQueryData(
+      queryKeys.sets.bySessionExercise(sessionExerciseId),
+      (old: CachedSet[] | undefined) => {
+        if (!old) return old;
+        return old.map(oldSet => {
+          const serverSet = serverSets.find(s => s.set_index === oldSet.set_index);
+          if (serverSet) {
+            return { ...oldSet, id: serverSet.id };
+          }
+          return oldSet;
+        });
+      }
+    );
+  }, [queryClient, cacheKey]);
+
   return {
     session,
     isLoading,
@@ -435,6 +523,8 @@ export function useActiveSessionCache(sessionId: string | null): ActiveSessionCa
     updateExerciseSortOrderOptimistic,
     updateRpeDisplayOptimistic,
     initializeEmptySession,
+    syncExerciseWithServerIds,
+    syncSetIdsForExercise,
     refetch,
   };
 }
