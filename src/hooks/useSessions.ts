@@ -167,7 +167,9 @@ export function useSessionExercises(sessionId: string | null) {
       
       if (seError) throw seError;
 
-      // Create initial sets
+      // Create initial sets and RETURN their IDs
+      let createdSets: { id: string; set_index: number; weight: number; reps: number }[] = [];
+      
       if (initialSets.length > 0) {
         const setsToInsert = initialSets.map((set, index) => ({
           session_exercise_id: sessionExercise.id,
@@ -176,14 +178,17 @@ export function useSessionExercises(sessionId: string | null) {
           reps: set.reps,
         }));
 
-        const { error: setsError } = await supabase
+        const { data: setsData, error: setsError } = await supabase
           .from('sets')
-          .insert(setsToInsert);
+          .insert(setsToInsert)
+          .select('id, set_index, weight, reps');
 
         if (setsError) throw setsError;
+        createdSets = setsData || [];
       }
 
-      return sessionExercise;
+      // Return both session_exercise and its created sets with real IDs
+      return { ...sessionExercise, created_sets: createdSets };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });
@@ -258,7 +263,9 @@ export function useSessionExercises(sessionId: string | null) {
         .delete()
         .eq('session_exercise_id', oldSessionExerciseId);
 
-      // 3. Create new sets for the new exercise
+      // 3. Create new sets for the new exercise and RETURN their IDs
+      let createdSets: { id: string; set_index: number; weight: number; reps: number }[] = [];
+      
       if (initialSets.length > 0) {
         const setsToInsert = initialSets.map((set, index) => ({
           session_exercise_id: oldSessionExerciseId,
@@ -267,7 +274,12 @@ export function useSessionExercises(sessionId: string | null) {
           reps: set.reps,
         }));
 
-        await supabase.from('sets').insert(setsToInsert);
+        const { data: setsData } = await supabase
+          .from('sets')
+          .insert(setsToInsert)
+          .select('id, set_index, weight, reps');
+        
+        createdSets = setsData || [];
       }
 
       // 4. Fetch and return the updated session_exercise with exercise details
@@ -282,7 +294,8 @@ export function useSessionExercises(sessionId: string | null) {
       
       if (fetchError) throw fetchError;
       
-      return updatedExercise;
+      // Return with created_sets for cache sync
+      return { ...updatedExercise, created_sets: createdSets };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sessions.exercises(sessionId || '') });

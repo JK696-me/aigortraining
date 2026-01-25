@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { usePendingCompletionSync } from "@/hooks/usePendingCompletionSync";
 import { useSessionOutboxSync } from "@/hooks/useSessionOutboxSync";
+import { useSetOutboxSync } from "@/hooks/useSetOutboxSync";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
 import { useIntro } from "@/contexts/IntroContext";
 import { useTour } from "@/contexts/TourContext";
@@ -13,6 +14,9 @@ export function BackgroundSyncManager() {
 
   // Unified outbox sync: session activity + auto-complete
   useSessionOutboxSync();
+  
+  // Set-level outbox sync: ensure all set updates are persisted
+  useSetOutboxSync();
   
   // Unified app initialization: seeding + intro
   const { showIntro, completeIntro } = useAppInitialization();

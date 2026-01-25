@@ -20,6 +20,7 @@ import { ru, enUS } from 'date-fns/locale';
 import { useQueryClient } from '@tanstack/react-query';
 import { getLastExercisePerformance, LastExercisePerformanceResult } from '@/lib/lastExercisePerformance';
 import { useTouchSessionActivity } from '@/hooks/useTouchSessionActivity';
+import { enqueueSetUpdate, enqueueSetDelete } from '@/lib/setOutbox';
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -136,21 +137,47 @@ export default function Exercise() {
     exercise: cachedExercise.exercise!,
   } : null;
   
-  // Wrapper functions for updateSet/addSet/deleteSet with optimistic updates
+  // DEV logging helper
+  const devLog = useCallback((...args: unknown[]) => {
+    if (import.meta.env.DEV) {
+      console.log('[Exercise]', ...args);
+    }
+  }, []);
+
+  // Wrapper functions for updateSet/addSet/deleteSet with optimistic updates + outbox
   const updateSet = useCallback(({ setId, updates }: { setId: string; updates: Partial<CachedSet> }) => {
     if (!sessionExerciseId) return;
 
     touch();
     
+    // DEV: Log every set update
+    devLog('updateSet:', { setId, sessionExerciseId, updates });
+    
     // Optimistic update
     updateSetOptimistic(sessionExerciseId, setId, updates);
     
-    // Sync to server in background (fire and forget)
+    // Queue to outbox for reliable sync (deduplicates by set_id)
+    enqueueSetUpdate(setId, sessionExerciseId, {
+      weight: updates.weight,
+      reps: updates.reps,
+      rpe: updates.rpe,
+      is_completed: updates.is_completed,
+    });
+    
+    // Also fire immediate sync attempt (fire and forget)
     supabase
       .from('sets')
       .update(updates)
-      .eq('id', setId);
-  }, [sessionExerciseId, updateSetOptimistic, touch]);
+      .eq('id', setId)
+      .then(({ error }) => {
+        if (!error) {
+          // Remove from outbox on success (immediate sync worked)
+          import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
+            removeSetOutboxBySetId(setId);
+          });
+        }
+      });
+  }, [sessionExerciseId, updateSetOptimistic, touch, devLog]);
   
   const addSet = useCallback(({ weight, reps }: { weight: number; reps: number }) => {
     if (!sessionExerciseId) return;
@@ -159,6 +186,8 @@ export default function Exercise() {
     
     const nextIndex = sets.length > 0 ? Math.max(...sets.map(s => s.set_index)) + 1 : 1;
     const tempId = crypto.randomUUID();
+    
+    devLog('addSet:', { tempId, sessionExerciseId, nextIndex, weight, reps });
     
     const newSet: CachedSet = {
       id: tempId,
@@ -173,7 +202,7 @@ export default function Exercise() {
     // Optimistic add
     addSetOptimistic(sessionExerciseId, newSet);
     
-    // Sync to server
+    // Sync to server and get real ID
     supabase
       .from('sets')
       .insert({
@@ -186,27 +215,40 @@ export default function Exercise() {
       .single()
       .then(({ data }) => {
         if (data) {
+          devLog('addSet: got real ID:', data.id, 'was temp:', tempId);
           // Update with real ID
           deleteSetOptimistic(sessionExerciseId, tempId);
           addSetOptimistic(sessionExerciseId, data as CachedSet);
         }
       });
-  }, [sessionExerciseId, sets, addSetOptimistic, deleteSetOptimistic, touch]);
+  }, [sessionExerciseId, sets, addSetOptimistic, deleteSetOptimistic, touch, devLog]);
   
   const deleteSet = useCallback((setId: string) => {
     if (!sessionExerciseId) return;
 
     touch();
     
+    devLog('deleteSet:', { setId, sessionExerciseId });
+    
     // Optimistic delete
     deleteSetOptimistic(sessionExerciseId, setId);
+    
+    // Queue delete to outbox
+    enqueueSetDelete(setId, sessionExerciseId);
     
     // Sync to server
     supabase
       .from('sets')
       .delete()
-      .eq('id', setId);
-  }, [sessionExerciseId, deleteSetOptimistic, touch]);
+      .eq('id', setId)
+      .then(({ error }) => {
+        if (!error) {
+          import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
+            removeSetOutboxBySetId(setId);
+          });
+        }
+      });
+  }, [sessionExerciseId, deleteSetOptimistic, touch, devLog]);
   
   // refetchSets is now a no-op since we use optimistic updates
   const refetchSets = useCallback(() => {
