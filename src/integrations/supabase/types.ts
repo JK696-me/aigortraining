@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      exercise_aliases: {
+        Row: {
+          alias_name: string
+          canonical_key: string
+          created_at: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          alias_name: string
+          canonical_key: string
+          created_at?: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          alias_name?: string
+          canonical_key?: string
+          created_at?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       exercise_state: {
         Row: {
           base_sets: number
@@ -79,6 +103,7 @@ export type Database = {
       }
       exercises: {
         Row: {
+          canonical_key: string | null
           created_at: string
           id: string
           increment_kind: string
@@ -89,6 +114,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          canonical_key?: string | null
           created_at?: string
           id?: string
           increment_kind: string
@@ -99,6 +125,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          canonical_key?: string | null
           created_at?: string
           id?: string
           increment_kind?: string

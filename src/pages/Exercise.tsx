@@ -527,9 +527,18 @@ export default function Exercise() {
           }
         }
         
-        // Bulk update to DB
+        // Bulk update to DB + enqueue to outbox for reliability
         if (updates.length > 0) {
-          // Use individual updates since Supabase doesn't support bulk update with different values
+          // Queue to outbox first for reliability
+          for (const u of updates) {
+            enqueueSetUpdate(u.id, sessionExerciseId, {
+              weight: u.weight,
+              reps: u.reps,
+              rpe: u.rpe,
+            });
+          }
+          
+          // Then sync to DB
           touch();
           await Promise.all(
             updates.map(u => 
@@ -537,10 +546,22 @@ export default function Exercise() {
                 weight: u.weight, 
                 reps: u.reps, 
                 rpe: u.rpe 
-              }).eq('id', u.id)
+              }).eq('id', u.id).then(({ error }) => {
+                if (!error) {
+                  import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
+                    removeSetOutboxBySetId(u.id);
+                  });
+                }
+              })
             )
           );
           triggerPreviewUpdate();
+          
+          devLog('Auto-fill complete:', { 
+            stage: lastPerformance.matchStage, 
+            sets: updates.length,
+            hasRpe: updates.some(u => u.rpe !== null)
+          });
         }
         
         autoFilledExercisesRef.current.add(sessionExerciseId);
@@ -937,16 +958,33 @@ export default function Exercise() {
         }
       }
       
-      // Bulk update to DB (parallel)
+      // Bulk update to DB (parallel) + enqueue to outbox for reliability
       if (updates.length > 0) {
         touch();
+        
+        // Queue to outbox for reliable sync
+        for (const u of updates) {
+          enqueueSetUpdate(u.id, sessionExerciseId, {
+            weight: u.weight,
+            reps: u.reps,
+            rpe: u.rpe,
+          });
+        }
+        
+        // Immediate DB sync (parallel)
         await Promise.all(
           updates.map(u => 
             supabase.from('sets').update({ 
               weight: u.weight, 
               reps: u.reps, 
               rpe: u.rpe 
-            }).eq('id', u.id)
+            }).eq('id', u.id).then(({ error }) => {
+              if (!error) {
+                import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
+                  removeSetOutboxBySetId(u.id);
+                });
+              }
+            })
           )
         );
       }
@@ -985,9 +1023,12 @@ export default function Exercise() {
     // Get all set IDs to update
     const setIds = sets.map(s => s.id);
     
-    // Optimistic update: update all sets in cache immediately
+    // Optimistic update + enqueue to outbox for all sets
     for (const setItem of sets) {
       updateSetOptimistic(sessionExerciseId, setItem.id, { weight, reps, rpe });
+      
+      // Queue to outbox for reliable sync
+      enqueueSetUpdate(setItem.id, sessionExerciseId, { weight, reps, rpe });
     }
     
     // Single bulk update to DB
@@ -1003,9 +1044,16 @@ export default function Exercise() {
       return;
     }
     
+    // Clear outbox entries on success
+    for (const setItem of sets) {
+      import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
+        removeSetOutboxBySetId(setItem.id);
+      });
+    }
+    
     triggerPreviewUpdate();
     toast.success(locale === 'ru' ? 'Все подходы заполнены' : 'All sets filled');
-  }, [currentSet, sessionExerciseId, weightValue, repsValue, sets, updateSetOptimistic, triggerPreviewUpdate, locale]);
+  }, [currentSet, sessionExerciseId, weightValue, repsValue, sets, updateSetOptimistic, triggerPreviewUpdate, locale, touch]);
 
   // Error state - exercise not found after timeout
   if (loadTimeout && !cachedExercise) {

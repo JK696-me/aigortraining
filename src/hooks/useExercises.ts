@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { queryKeys, CACHE_TTL } from '@/lib/queryKeys';
+import { generateCanonicalKey } from '@/lib/canonicalKey';
 
 export interface Exercise {
   id: string;
@@ -11,10 +12,11 @@ export interface Exercise {
   increment_kind: 'barbell' | 'dumbbells' | 'machine';
   increment_value: number;
   is_dumbbell_pair: boolean;
+  canonical_key: string | null;
   created_at: string;
 }
 
-export type ExerciseInsert = Omit<Exercise, 'id' | 'user_id' | 'created_at'>;
+export type ExerciseInsert = Omit<Exercise, 'id' | 'user_id' | 'created_at' | 'canonical_key'>;
 export type ExerciseUpdate = Partial<ExerciseInsert>;
 
 export function useExercises(searchQuery?: string) {
@@ -50,9 +52,16 @@ export function useExercises(searchQuery?: string) {
     mutationFn: async (exercise: ExerciseInsert) => {
       if (!user) throw new Error('Not authenticated');
       
+      // Generate canonical_key from name
+      const canonical_key = generateCanonicalKey(exercise.name);
+      
       const { data, error } = await supabase
         .from('exercises')
-        .insert({ ...exercise, user_id: user.id })
+        .insert({ 
+          ...exercise, 
+          user_id: user.id,
+          canonical_key: canonical_key || null,
+        })
         .select()
         .single();
       
@@ -69,9 +78,15 @@ export function useExercises(searchQuery?: string) {
     mutationFn: async ({ id, updates }: { id: string; updates: ExerciseUpdate }) => {
       if (!user) throw new Error('Not authenticated');
       
+      // Regenerate canonical_key if name is being updated
+      const updatePayload: ExerciseUpdate & { canonical_key?: string | null } = { ...updates };
+      if (updates.name) {
+        updatePayload.canonical_key = generateCanonicalKey(updates.name) || null;
+      }
+      
       const { data, error } = await supabase
         .from('exercises')
-        .update(updates)
+        .update(updatePayload)
         .eq('id', id)
         .eq('user_id', user.id)
         .select()
