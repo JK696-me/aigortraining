@@ -27,6 +27,7 @@ import HealthEntry from "./pages/HealthEntry";
 import Settings from "./pages/Settings";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
+import DbDiagnostics from "./pages/DbDiagnostics";
 
 // Create stable query client
 const queryClient = createQueryClient();
@@ -69,6 +70,7 @@ const App = () => (
                       <Route path="/health" element={<ProtectedRoute><Health /></ProtectedRoute>} />
                       <Route path="/health-entry" element={<ProtectedRoute><HealthEntry /></ProtectedRoute>} />
                       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                      <Route path="/db-diagnostics" element={<ProtectedRoute><DbDiagnostics /></ProtectedRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </TourProvider>
