@@ -137,6 +137,13 @@ export default function Exercise() {
     exercise: cachedExercise.exercise!,
   } : null;
   
+  // DEV tracing panel state
+  const [devTraces, setDevTraces] = useState<Array<{
+    ts: string; setId: string; setIndex: number;
+    field: string; oldVal: unknown; newVal: unknown;
+    method: string; seId: string;
+  }>>([]);
+
   // DEV logging helper
   const devLog = useCallback((...args: unknown[]) => {
     if (import.meta.env.DEV) {
@@ -144,13 +151,44 @@ export default function Exercise() {
     }
   }, []);
 
+  const traceSetChange = useCallback((params: {
+    setId: string; setIndex: number; field: string;
+    oldVal: unknown; newVal: unknown; method: string;
+  }) => {
+    if (!import.meta.env.DEV) return;
+    const entry = {
+      ts: new Date().toISOString().slice(11, 23),
+      seId: sessionExerciseId || '?',
+      ...params,
+    };
+    console.log(
+      `%c[SET TRACE]%c ${entry.field}: ${String(entry.oldVal)} → ${String(entry.newVal)} | set_id=${entry.setId} idx=${entry.setIndex} | via ${entry.method}`,
+      'color:#0f0;font-weight:bold', 'color:inherit',
+      { userId: user?.id, sessionId: activeSessionId, ...entry }
+    );
+    setDevTraces(prev => [entry, ...prev].slice(0, 30));
+  }, [sessionExerciseId, user?.id, activeSessionId]);
+
   // Wrapper functions for updateSet/addSet/deleteSet with optimistic updates + outbox
   const updateSet = useCallback(({ setId, updates }: { setId: string; updates: Partial<CachedSet> }) => {
     if (!sessionExerciseId) return;
 
     touch();
-    
-    // DEV: Log every set update
+
+    // DEV TRACE: log each changed field with old→new
+    const oldSet = sets.find(s => s.id === setId);
+    if (oldSet && import.meta.env.DEV) {
+      for (const key of ['weight', 'reps', 'rpe', 'is_completed'] as const) {
+        if (updates[key] !== undefined && updates[key] !== oldSet[key]) {
+          traceSetChange({
+            setId, setIndex: oldSet.set_index, field: key,
+            oldVal: oldSet[key], newVal: updates[key],
+            method: 'local_cache+outbox+supabase',
+          });
+        }
+      }
+    }
+
     devLog('updateSet:', { setId, sessionExerciseId, updates });
     
     // Optimistic update
@@ -730,6 +768,13 @@ export default function Exercise() {
   const handleRpeChange = async (rpe: number) => {
     if (!currentSet || !sessionExerciseId) return;
     
+    // DEV TRACE for RPE
+    traceSetChange({
+      setId: currentSet.id, setIndex: currentSet.set_index,
+      field: 'rpe', oldVal: currentSet.rpe, newVal: rpe,
+      method: 'local_cache+supabase_direct',
+    });
+
     // Optimistic update in cache for set
     updateSetOptimistic(sessionExerciseId, currentSet.id, { rpe });
     
@@ -1484,6 +1529,21 @@ export default function Exercise() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* DEV Trace Panel */}
+      {import.meta.env.DEV && devTraces.length > 0 && (
+        <div className="fixed bottom-16 left-0 right-0 z-50 max-h-40 overflow-y-auto bg-black/90 text-[10px] text-green-400 font-mono p-2 border-t border-green-800">
+          <div className="flex justify-between items-center mb-1">
+            <span className="text-green-300 font-bold">SET TRACE ({devTraces.length})</span>
+            <button onClick={() => setDevTraces([])} className="text-red-400 text-[9px]">CLEAR</button>
+          </div>
+          {devTraces.map((t, i) => (
+            <div key={i} className="truncate opacity-90">
+              {t.ts} | <span className="text-yellow-300">{t.field}</span>: {String(t.oldVal)}→<span className="text-white">{String(t.newVal)}</span> | set={t.setId.slice(0, 8)} idx={t.setIndex} | {t.method}
+            </div>
+          ))}
+        </div>
+      )}
     </Layout>
   );
 }
