@@ -333,7 +333,7 @@ export type Database = {
           rpe: number | null
           rpe_display: number | null
           session_id: string
-          sort_order: number | null
+          sort_order: number
         }
         Insert: {
           active_set_index?: number | null
@@ -344,7 +344,7 @@ export type Database = {
           rpe?: number | null
           rpe_display?: number | null
           session_id: string
-          sort_order?: number | null
+          sort_order?: number
         }
         Update: {
           active_set_index?: number | null
@@ -355,7 +355,7 @@ export type Database = {
           rpe?: number | null
           rpe_display?: number | null
           session_id?: string
-          sort_order?: number | null
+          sort_order?: number
         }
         Relationships: [
           {
@@ -455,6 +455,7 @@ export type Database = {
           rpe: number | null
           session_exercise_id: string
           set_index: number
+          updated_at: string
           weight: number
         }
         Insert: {
@@ -465,6 +466,7 @@ export type Database = {
           rpe?: number | null
           session_exercise_id: string
           set_index: number
+          updated_at?: string
           weight: number
         }
         Update: {
@@ -475,6 +477,7 @@ export type Database = {
           rpe?: number | null
           session_exercise_id?: string
           set_index?: number
+          updated_at?: string
           weight?: number
         }
         Relationships: [
