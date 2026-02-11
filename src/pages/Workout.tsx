@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { useActiveSessionCache, CachedSet, CachedSessionExercise } from "@/hooks/useActiveSessionCache";
-import { fetchLastPerformanceWithFallback } from "@/hooks/useLastPerformance";
+import { getLastLoggedSets } from "@/lib/getLastLoggedSets";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -231,33 +231,27 @@ export default function Workout() {
 
       const setsCount = exerciseState?.current_sets || 3;
 
-      // Fetch last performance data with fallback by name
-      const lastPerformance = await fetchLastPerformanceWithFallback({
+      // Fetch last completed performance via getLastLoggedSets (strict by set.id)
+      const lastLogged = await getLastLoggedSets({
         userId: user.id,
         exerciseId: exercise.id,
         exerciseName: exercise.name,
-        activeSessionId: sessionId,
-        isDebug: false,
+        excludeSessionId: sessionId,
       });
 
-      // Default values
-      let lastWeight = 0;
-      let lastReps = exercise.type <= 2 ? 6 : 10;
+      // Default fallback values when no history exists
+      const defaultReps = exercise.type <= 2 ? 6 : 10;
 
-      if (lastPerformance && lastPerformance.sets.length > 0) {
-        // Use first set values as defaults for new sets
-        lastWeight = lastPerformance.sets[0].weight;
-        lastReps = lastPerformance.sets[0].reps;
-      }
-
-      // Build initial sets with prev_* fields for each set
+      // Build initial sets: each set gets its matching historical values by set_index
       const initialSets = Array.from({ length: setsCount }, (_, index) => {
         const setIndex = index + 1;
-        const prevSet = lastPerformance?.sets.find(s => s.set_index === setIndex);
+        const prevSet = lastLogged?.sets.find(s => s.set_index === setIndex);
+        // If no exact match for this set_index, fall back to last set in history (for extra sets)
+        const fallbackSet = prevSet ?? (lastLogged?.sets.length ? lastLogged.sets[lastLogged.sets.length - 1] : null);
         
         return {
-          weight: pickerMode === 'replace' ? (prevSet?.weight ?? lastWeight) : lastWeight,
-          reps: pickerMode === 'replace' ? (prevSet?.reps ?? lastReps) : lastReps,
+          weight: fallbackSet?.weight ?? 0,
+          reps: fallbackSet?.reps ?? defaultReps,
           prev_weight: prevSet?.weight ?? null,
           prev_reps: prevSet?.reps ?? null,
           prev_rpe: prevSet?.rpe ?? null,
@@ -321,8 +315,8 @@ export default function Workout() {
           id: crypto.randomUUID(),
           session_exercise_id: tempSessionExerciseId,
           set_index: index + 1,
-          weight: lastWeight, // Use last weight from previous workout for convenience
-          reps: lastReps, // Use last reps from previous workout for convenience
+          weight: set.weight,
+          reps: set.reps,
           is_completed: false,
           rpe: null,
           prev_weight: set.prev_weight,
