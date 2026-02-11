@@ -6,6 +6,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { calculateProgressionForSession } from '@/lib/progression';
 import { toast } from 'sonner';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { getSetOutbox, setSetOutbox, SetOutboxItem } from '@/lib/setOutbox';
 
 interface PendingCompletion {
   sessionId: string;
@@ -60,6 +61,30 @@ export function usePendingCompletionSync() {
     
     for (const completion of pendingCompletions) {
       try {
+        // Flush any remaining set outbox items for this session's exercises first
+        const outboxItems = getSetOutbox()
+        const sessionSetItems = outboxItems.filter(i => i.type === 'UPSERT_SET')
+        if (sessionSetItems.length > 0) {
+          console.log('[PendingCompletionSync] Flushing', sessionSetItems.length, 'outbox sets before completing', completion.sessionId)
+          for (const item of sessionSetItems) {
+            const { error: upsertErr } = await supabase
+              .from('sets')
+              .update({
+                ...(item.payload.weight !== undefined && { weight: item.payload.weight }),
+                ...(item.payload.reps !== undefined && { reps: item.payload.reps }),
+                ...(item.payload.rpe !== undefined && { rpe: item.payload.rpe }),
+                ...(item.payload.is_completed !== undefined && { is_completed: item.payload.is_completed }),
+              })
+              .eq('id', item.set_id)
+            
+            if (!upsertErr) {
+              // Remove successfully synced item
+              const remaining = getSetOutbox().filter(i2 => i2.id !== item.id)
+              setSetOutbox(remaining)
+            }
+          }
+        }
+
         // Calculate progression
         await calculateProgressionForSession(completion.sessionId, user.id);
         

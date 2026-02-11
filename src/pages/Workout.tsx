@@ -11,6 +11,7 @@ import { useSessionExercises, SessionExercise } from "@/hooks/useSessions";
 import { Exercise } from "@/hooks/useExercises";
 import { useActiveSessionCache, CachedSet, CachedSessionExercise } from "@/hooks/useActiveSessionCache";
 import { getLastLoggedSets } from "@/lib/getLastLoggedSets";
+import { flushWorkout } from "@/lib/flushWorkout";
 import { DraggableExerciseList } from "@/components/DraggableExerciseList";
 import { ExercisePicker } from "@/components/ExercisePicker";
 import { SyncIndicator } from "@/components/SyncIndicator";
@@ -81,7 +82,7 @@ export default function Workout() {
   const { touch } = useTouchSessionActivity({ sessionId });
   
   const { exercises: sessionExercises, isLoading, addExercise, deleteExercise, replaceExercise, reorderExercises } = useSessionExercises(sessionId);
-  const { replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession, syncExerciseWithServerIds, syncSetIdsForExercise } = useActiveSessionCache(sessionId);
+  const { session: cachedSession, replaceExerciseOptimistic, updateExerciseSortOrderOptimistic, addExerciseOptimistic, initializeEmptySession, syncExerciseWithServerIds, syncSetIdsForExercise } = useActiveSessionCache(sessionId);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'add' | 'replace'>('add');
   const [replacingExerciseId, setReplacingExerciseId] = useState<string | null>(null);
@@ -492,17 +493,14 @@ export default function Workout() {
     }
     completionRequestIdRef.current = requestId;
     
-    // FLUSH DIRTY SETS BEFORE COMPLETION (anti-data-loss)
-    try {
-      const { getSetOutbox } = await import('@/lib/setOutbox');
-      const dirtyCount = getSetOutbox().length;
-      if (dirtyCount > 0) {
-        console.log('[Workout] Flushing', dirtyCount, 'dirty sets before completion');
-        // Give outbox sync a chance to flush
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    } catch (e) {
-      console.warn('[Workout] Failed to check/flush dirty sets:', e);
+    // FLUSH ALL SETS BEFORE COMPLETION (anti-data-loss: batch upsert by set.id)
+    const allSets = cachedSession?.exercises.flatMap(e => e.sets) ?? [];
+    console.log('[Workout] flushWorkout: flushing', allSets.length, 'sets before completion');
+    const flushResult = await flushWorkout(allSets, isOnline);
+    
+    if (flushResult.failed > 0) {
+      console.warn('[Workout] flushWorkout: some sets failed to flush:', flushResult.failed);
+      // Continue anyway — data is in outbox for retry
     }
     
     // PHASE A: Optimistic UI update (instant)
