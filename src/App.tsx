@@ -29,6 +29,7 @@ import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 import DbDiagnostics from "./pages/DbDiagnostics";
 import RegressionChecks from "./pages/RegressionChecks";
+import MergeExercises from "./pages/MergeExercises";
 
 // Create stable query client
 const queryClient = createQueryClient();
@@ -73,6 +74,7 @@ const App = () => (
                       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                       <Route path="/db-diagnostics" element={<ProtectedRoute><DbDiagnostics /></ProtectedRoute>} />
                       <Route path="/regression-checks" element={<ProtectedRoute><RegressionChecks /></ProtectedRoute>} />
+                      <Route path="/merge-exercises" element={<ProtectedRoute><MergeExercises /></ProtectedRoute>} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
                   </TourProvider>
