@@ -19,6 +19,7 @@ import { TemplateSaveModal } from "@/components/TemplateSaveModal";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { calculateProgressionForSession } from "@/lib/progression";
+import { pushTraceEvent, isDevTraceEnabled } from "@/lib/devTraceStore";
 import { useWorkout } from "@/contexts/WorkoutContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
@@ -260,6 +261,11 @@ export default function Workout() {
       });
 
       if (pickerMode === 'replace' && replacingExerciseId) {
+        // Capture old exercise_id and set IDs before replace for tracing
+        const oldExercise = cachedSession?.exercises.find(e => e.id === replacingExerciseId);
+        const oldExerciseId = oldExercise?.exercise_id || '';
+        const setIdsBefore = oldExercise?.sets.map(s => s.id) || [];
+
         // Optimistic update: immediately update the cache before DB sync
         // For replace mode, fill current values from previous + also store prev_*
         const tempSets: CachedSet[] = initialSets.map((set, index) => ({
@@ -285,6 +291,20 @@ export default function Workout() {
         
         // Apply optimistic update immediately
         replaceExerciseOptimistic(replacingExerciseId, exercise.id, exerciseInfo, tempSets);
+
+        // E2 trace: exercise replacement
+        if (isDevTraceEnabled()) {
+          pushTraceEvent({
+            type: 'EXERCISE_REPLACE',
+            session_id: sessionId!,
+            session_exercise_id: replacingExerciseId,
+            old_exercise_id: oldExerciseId,
+            new_exercise_id: exercise.id,
+            set_ids_before: setIdsBefore,
+            set_ids_after: tempSets.map(s => s.id),
+            active_set_id: tempSets[0]?.id || null,
+          });
+        }
         
         // Then sync to database (in background) and get real set IDs
         replaceExercise({
@@ -501,6 +521,20 @@ export default function Workout() {
     if (flushResult.failed > 0) {
       console.warn('[Workout] flushWorkout: some sets failed to flush:', flushResult.failed);
       // Continue anyway — data is in outbox for retry
+    }
+
+    // E3 trace: workout completion
+    if (isDevTraceEnabled()) {
+      const hasRpe = allSets.some(s => s.rpe !== null && s.rpe !== undefined);
+      pushTraceEvent({
+        type: 'WORKOUT_COMPLETE',
+        session_id: sessionId,
+        count_sets_in_cache: allSets.length,
+        count_sets_upserted: flushResult.flushed,
+        includes_rpe_field: hasRpe,
+        db_result: flushResult.offline ? 'offline' : flushResult.failed > 0 ? 'error' : 'ok',
+        outbox_queued: flushResult.offline || flushResult.failed > 0,
+      });
     }
     
     // PHASE A: Optimistic UI update (instant)

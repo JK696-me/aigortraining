@@ -12,6 +12,7 @@ import { TourProvider } from "@/contexts/TourContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { BackgroundSyncManager } from "@/components/BackgroundSyncManager";
 import { TourOverlay } from "@/components/TourOverlay";
+import { DevTracePanel } from "@/components/DevTracePanel";
 import { createQueryClient, createIDBPersister } from "@/lib/queryClient";
 import Home from "./pages/Home";
 import Workout from "./pages/Workout";
@@ -58,6 +59,7 @@ const App = () => (
                   <TourProvider>
                     <BackgroundSyncManager />
                     <TourOverlay />
+                    <DevTracePanel />
                     <Routes>
                       <Route path="/auth" element={<Auth />} />
                       <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />

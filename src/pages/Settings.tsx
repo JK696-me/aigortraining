@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight, Trash2, BookOpen } from "lucide-react";
+import { User, Bell, Scale, Moon, Info, LogOut, ChevronRight, Zap, Globe, Dumbbell, Weight, Trash2, BookOpen, Bug } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ import { useTour } from "@/contexts/TourContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { isDevTraceEnabled, setDevTraceEnabled } from "@/lib/devTraceStore";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -44,6 +45,9 @@ export default function Settings() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  // Dev trace toggle
+  const [devTrace, setDevTrace] = useState(() => isDevTraceEnabled());
 
   // Initialize from settings
   useEffect(() => {
@@ -294,6 +298,32 @@ export default function Settings() {
                 <span className="font-medium text-foreground">{t('aboutApp')}</span>
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </div>
+          </Card>
+        </div>
+
+        {/* Dev Tools Section */}
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-muted-foreground mb-3 px-1">
+            Dev Tools
+          </h3>
+          <Card className="bg-card border-border overflow-hidden">
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <Bug className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <span className="font-medium text-foreground block">Save Trace</span>
+                  <span className="text-xs text-muted-foreground">Логировать ввод/замену/завершение</span>
+                </div>
+              </div>
+              <Switch
+                checked={devTrace}
+                onCheckedChange={(val) => {
+                  setDevTrace(val);
+                  setDevTraceEnabled(val);
+                  toast.success(val ? 'Save Trace включён' : 'Save Trace выключен');
+                }}
+              />
             </div>
           </Card>
         </div>
