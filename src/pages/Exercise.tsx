@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getLastExercisePerformance, LastExercisePerformanceResult } from '@/lib/lastExercisePerformance';
 import { useTouchSessionActivity } from '@/hooks/useTouchSessionActivity';
 import { enqueueSetUpdate, enqueueSetDelete } from '@/lib/setOutbox';
+import { pushTraceEvent, isDevTraceEnabled } from '@/lib/devTraceStore';
 import { 
   calculateRecommendationPreview, 
   applyRecommendation, 
@@ -175,8 +176,9 @@ export default function Exercise() {
 
     touch();
 
-    // DEV TRACE: log each changed field with old→new
     const oldSet = sets.find(s => s.id === setId);
+
+    // DEV TRACE: log each changed field with old→new
     if (oldSet && import.meta.env.DEV) {
       for (const key of ['weight', 'reps', 'rpe', 'is_completed'] as const) {
         if (updates[key] !== undefined && updates[key] !== oldSet[key]) {
@@ -201,6 +203,27 @@ export default function Exercise() {
       rpe: updates.rpe,
       is_completed: updates.is_completed,
     });
+
+    // E1 trace event
+    if (isDevTraceEnabled()) {
+      pushTraceEvent({
+        type: 'SET_CHANGE',
+        active_session_id: activeSessionId || '',
+        session_exercise_id: sessionExerciseId,
+        set_id: setId,
+        set_index: oldSet?.set_index ?? -1,
+        payload: {
+          weight: updates.weight,
+          reps: updates.reps,
+          rpe: updates.rpe,
+          is_completed: updates.is_completed,
+        },
+        local_cache_applied: true,
+        db_write_attempted: true,
+        db_write_result: 'pending',
+        outbox_queued: true,
+      })
+    }
     
     // Also fire immediate sync attempt (fire and forget)
     supabase
@@ -209,13 +232,41 @@ export default function Exercise() {
       .eq('id', setId)
       .then(({ error }) => {
         if (!error) {
-          // Remove from outbox on success (immediate sync worked)
           import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
             removeSetOutboxBySetId(setId);
           });
+          // Update trace result
+          if (isDevTraceEnabled()) {
+            pushTraceEvent({
+              type: 'SET_CHANGE',
+              active_session_id: activeSessionId || '',
+              session_exercise_id: sessionExerciseId,
+              set_id: setId,
+              set_index: oldSet?.set_index ?? -1,
+              payload: updates,
+              local_cache_applied: true,
+              db_write_attempted: true,
+              db_write_result: 'ok',
+              outbox_queued: false,
+            })
+          }
+        } else if (isDevTraceEnabled()) {
+          pushTraceEvent({
+            type: 'SET_CHANGE',
+            active_session_id: activeSessionId || '',
+            session_exercise_id: sessionExerciseId,
+            set_id: setId,
+            set_index: oldSet?.set_index ?? -1,
+            payload: updates,
+            local_cache_applied: true,
+            db_write_attempted: true,
+            db_write_result: 'error',
+            db_error_message: error.message,
+            outbox_queued: true,
+          })
         }
       });
-  }, [sessionExerciseId, updateSetOptimistic, touch, devLog]);
+  }, [sessionExerciseId, activeSessionId, sets, updateSetOptimistic, touch, devLog, traceSetChange]);
   
   const addSet = useCallback(({ weight, reps }: { weight: number; reps: number }) => {
     if (!sessionExerciseId) return;
