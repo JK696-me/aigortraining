@@ -191,18 +191,27 @@ export default function Exercise() {
       }
     }
 
-    devLog('updateSet:', { setId, sessionExerciseId, updates });
-    
-    // Optimistic update
-    updateSetOptimistic(sessionExerciseId, setId, updates);
-    
-    // Queue to outbox for reliable sync (deduplicates by set_id)
-    enqueueSetUpdate(setId, sessionExerciseId, {
+    // P0 FIX: Merge patch with current set to build FULL payload
+    // Every DB write must include all fields: weight, reps, rpe, is_completed
+    const fullPayload = oldSet ? {
+      weight: updates.weight ?? oldSet.weight,
+      reps: updates.reps ?? oldSet.reps,
+      rpe: updates.rpe !== undefined ? updates.rpe : oldSet.rpe,
+      is_completed: updates.is_completed ?? oldSet.is_completed,
+    } : {
       weight: updates.weight,
       reps: updates.reps,
       rpe: updates.rpe,
       is_completed: updates.is_completed,
-    });
+    };
+
+    devLog('updateSet:', { setId, sessionExerciseId, updates, fullPayload });
+    
+    // Optimistic update
+    updateSetOptimistic(sessionExerciseId, setId, updates);
+    
+    // Queue to outbox for reliable sync — FULL payload (deduplicates by set_id)
+    enqueueSetUpdate(setId, sessionExerciseId, fullPayload);
 
     // E1 trace event
     if (isDevTraceEnabled()) {
@@ -212,12 +221,7 @@ export default function Exercise() {
         session_exercise_id: sessionExerciseId,
         set_id: setId,
         set_index: oldSet?.set_index ?? -1,
-        payload: {
-          weight: updates.weight,
-          reps: updates.reps,
-          rpe: updates.rpe,
-          is_completed: updates.is_completed,
-        },
+        payload: fullPayload,
         local_cache_applied: true,
         db_write_attempted: true,
         db_write_result: 'pending',
@@ -225,17 +229,16 @@ export default function Exercise() {
       })
     }
     
-    // Also fire immediate sync attempt (fire and forget)
+    // Also fire immediate sync attempt (fire and forget) — FULL payload
     supabase
       .from('sets')
-      .update(updates)
+      .update(fullPayload)
       .eq('id', setId)
       .then(({ error }) => {
         if (!error) {
           import('@/lib/setOutbox').then(({ removeSetOutboxBySetId }) => {
             removeSetOutboxBySetId(setId);
           });
-          // Update trace result
           if (isDevTraceEnabled()) {
             pushTraceEvent({
               type: 'SET_CHANGE',
@@ -243,7 +246,7 @@ export default function Exercise() {
               session_exercise_id: sessionExerciseId,
               set_id: setId,
               set_index: oldSet?.set_index ?? -1,
-              payload: updates,
+              payload: fullPayload,
               local_cache_applied: true,
               db_write_attempted: true,
               db_write_result: 'ok',
@@ -257,7 +260,7 @@ export default function Exercise() {
             session_exercise_id: sessionExerciseId,
             set_id: setId,
             set_index: oldSet?.set_index ?? -1,
-            payload: updates,
+            payload: fullPayload,
             local_cache_applied: true,
             db_write_attempted: true,
             db_write_result: 'error',
@@ -826,33 +829,36 @@ export default function Exercise() {
       method: 'local_cache+supabase_direct',
     });
 
-    // Optimistic update in cache for set
-    updateSetOptimistic(sessionExerciseId, currentSet.id, { rpe });
+    // P0 FIX: Propagate RPE to ALL sets of this exercise (not just current)
+    const dbUpdates: Array<PromiseLike<unknown>> = [];
     
-    // Calculate aggregated rpe_display: last completed set with rpe value
-    // After this update, find the last set (by set_index) that has an rpe value
-    const updatedSets = [...sets];
-    const currentSetIdx = updatedSets.findIndex(s => s.id === currentSet.id);
-    if (currentSetIdx !== -1) {
-      updatedSets[currentSetIdx] = { ...updatedSets[currentSetIdx], rpe };
+    for (const s of sets) {
+      // Optimistic update in cache for each set
+      updateSetOptimistic(sessionExerciseId, s.id, { rpe });
+      
+      // Queue full payload to outbox for each set
+      const fullSetPayload = {
+        weight: s.weight,
+        reps: s.reps,
+        rpe,
+        is_completed: s.is_completed,
+      };
+      enqueueSetUpdate(s.id, sessionExerciseId, fullSetPayload);
+      
+      // Persist each set to DB
+      dbUpdates.push(supabase.from('sets').update({ rpe }).eq('id', s.id).then());
     }
     
-    // Find last set with rpe (highest set_index with rpe not null)
-    const completedSetsWithRpe = updatedSets
-      .filter(s => s.rpe !== null)
-      .sort((a, b) => b.set_index - a.set_index);
-    
-    const rpeDisplay = completedSetsWithRpe.length > 0 ? completedSetsWithRpe[0].rpe : null;
-    
     // Update rpe_display in cache
-    updateRpeDisplayOptimistic(sessionExerciseId, rpeDisplay);
+    updateRpeDisplayOptimistic(sessionExerciseId, rpe);
     
-    // Persist to DB (both set rpe and session_exercise rpe_display)
+    // Persist rpe_display too
+    dbUpdates.push(
+      supabase.from('session_exercises').update({ rpe_display: rpe }).eq('id', sessionExerciseId).then()
+    );
+    
     touch();
-    await Promise.all([
-      supabase.from('sets').update({ rpe }).eq('id', currentSet.id),
-      supabase.from('session_exercises').update({ rpe_display: rpeDisplay }).eq('id', sessionExerciseId),
-    ]);
+    await Promise.all(dbUpdates);
     
     triggerPreviewUpdate();
   };
@@ -892,8 +898,12 @@ export default function Exercise() {
     const completedSetIndex = currentSet.set_index;
     const workSetsCount = exerciseStateData.current_sets;
     
-    // Mark current set as completed (optimistic)
-    updateSet({ setId: currentSet.id, updates: { weight, reps, is_completed: true } });
+    // P0 FIX: Include RPE when completing set
+    // If set has rpe, use it; else fallback to exercise rpe_display; else null
+    const resolvedRpe = currentSet.rpe ?? cachedExercise?.rpe_display ?? null;
+    
+    // Mark current set as completed (optimistic) — includes RPE
+    updateSet({ setId: currentSet.id, updates: { weight, reps, is_completed: true, rpe: resolvedRpe } });
     
     // STRICT MODAL CONDITION:
     // Show modal ONLY if completing the LAST working set (set_index == work_sets_count)

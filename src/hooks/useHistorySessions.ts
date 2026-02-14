@@ -31,7 +31,7 @@ export interface SessionDetail {
     exercise_id: string
     name: string
     rpe: number | null
-    sets: { weight: number; reps: number; set_index: number }[]
+    sets: { weight: number; reps: number; set_index: number; rpe: number | null }[]
   }[]
 }
 
@@ -233,11 +233,11 @@ export function useSessionDetails(sessionId: string | null) {
       const exerciseIds = sessionExercises?.map(se => se.id) || []
 
       // Get ALL sets for all exercises in ONE query
-      let allSets: { session_exercise_id: string; weight: number; reps: number; set_index: number }[] = []
+      let allSets: { session_exercise_id: string; weight: number; reps: number; set_index: number; rpe: number | null }[] = []
       if (exerciseIds.length > 0) {
         const { data: setsData } = await supabase
           .from('sets')
-          .select('session_exercise_id, weight, reps, set_index')
+          .select('session_exercise_id, weight, reps, set_index, rpe')
           .in('session_exercise_id', exerciseIds)
           .order('set_index')
 
@@ -262,6 +262,7 @@ export function useSessionDetails(sessionId: string | null) {
           weight: s.weight,
           reps: s.reps,
           set_index: s.set_index,
+          rpe: s.rpe,
         })),
       }))
 

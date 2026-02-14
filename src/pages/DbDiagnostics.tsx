@@ -20,9 +20,64 @@ interface DiagnosticResult {
 export default function DbDiagnostics() {
   const [results, setResults] = useState<DiagnosticResult[]>([])
   const [isRunning, setIsRunning] = useState(false)
+  const [isBackfilling, setIsBackfilling] = useState(false)
+  const [backfillResult, setBackfillResult] = useState<string | null>(null)
   const [lastRun, setLastRun] = useState<Date | null>(null)
   const [copied, setCopied] = useState(false)
   const { user } = useAuth()
+
+  async function runBackfillRpe() {
+    if (!user) return
+    setIsBackfilling(true)
+    setBackfillResult(null)
+    try {
+      // Update sets.rpe from session_exercises.rpe_display where sets.rpe is null
+      const { data, error } = await supabase.rpc('reset_training_data') // placeholder — we use raw SQL below
+        
+      // Since we can't run arbitrary SQL via RPC, use a workaround:
+      // Find all sets with null rpe that belong to completed sessions with rpe_display
+      const { data: nullRpeSets } = await supabase
+        .from('sets')
+        .select(`
+          id, rpe, session_exercise_id,
+          session_exercises!inner(
+            id, rpe_display, session_id,
+            sessions!inner(id, status)
+          )
+        `)
+        .is('rpe', null)
+        .not('session_exercises.rpe_display', 'is', null)
+        .in('session_exercises.sessions.status', ['completed', 'completed_pending'])
+        .limit(500)
+
+      if (!nullRpeSets || nullRpeSets.length === 0) {
+        setBackfillResult('0 rows updated — all sets already have RPE or no rpe_display available')
+        setIsBackfilling(false)
+        return
+      }
+
+      let updated = 0
+      for (const row of nullRpeSets) {
+        const se = row.session_exercises as unknown as { rpe_display: number }
+        const rpeVal = se?.rpe_display
+        if (rpeVal == null) continue
+        
+        const { error: updateErr } = await supabase
+          .from('sets')
+          .update({ rpe: rpeVal })
+          .eq('id', row.id)
+        
+        if (!updateErr) updated++
+      }
+
+      setBackfillResult(`${updated} rows updated (out of ${nullRpeSets.length} candidates)`)
+    } catch (err) {
+      console.error('Backfill error:', err)
+      setBackfillResult(`Error: ${err}`)
+    } finally {
+      setIsBackfilling(false)
+    }
+  }
 
   async function runChecks() {
     if (!user) return
@@ -381,6 +436,32 @@ export default function DbDiagnostics() {
             )}
           </Card>
         ))}
+
+        {/* Backfill RPE Section */}
+        <Card className="border-amber-500/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Database className="h-5 w-5 text-amber-500" />
+              Backfill set RPE from session_exercises
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Обновит sets.rpe = session_exercises.rpe_display для completed сессий, где sets.rpe IS NULL
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button
+              variant="outline"
+              onClick={runBackfillRpe}
+              disabled={isBackfilling}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isBackfilling ? "animate-spin" : ""}`} />
+              {isBackfilling ? "Выполняется..." : "Backfill set RPE"}
+            </Button>
+            {backfillResult && (
+              <p className="text-sm font-mono text-muted-foreground">{backfillResult}</p>
+            )}
+          </CardContent>
+        </Card>
 
         {results.length === 0 && !isRunning && (
           <Card>
