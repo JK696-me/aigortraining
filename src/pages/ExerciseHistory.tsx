@@ -280,13 +280,22 @@ export default function ExerciseHistory() {
                     </p>
                   </Card>
                 ) : (
-                  selectedSessionDetails.exercises.map((exercise) => (
+                  selectedSessionDetails.exercises.map((exercise) => {
+                    // P0 FIX: Compute RPE from sets (avg rounded), fallback to exercise.rpe
+                    const setRpeValues = exercise.sets
+                      .map(s => s.rpe)
+                      .filter((r): r is number => r !== null && r !== undefined);
+                    const computedRpe = setRpeValues.length > 0
+                      ? Math.round(setRpeValues.reduce((a, b) => a + b, 0) / setRpeValues.length)
+                      : exercise.rpe;
+                    
+                    return (
                     <Card key={exercise.id} className="p-4 bg-card border-border">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="font-semibold text-foreground">{exercise.name}</h3>
                         <div className="flex items-center gap-2">
-                          {exercise.rpe !== null && (
-                            <span className="text-sm text-accent">RPE {exercise.rpe}</span>
+                          {computedRpe !== null && computedRpe !== undefined && (
+                            <span className="text-sm text-accent">RPE {computedRpe}</span>
                           )}
                           <button
                             onClick={() => navigate(`/exercise-progress?exercise=${exercise.exercise_id}&from=history`)}
@@ -319,7 +328,8 @@ export default function ExerciseHistory() {
                         )}
                       </div>
                     </Card>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </>

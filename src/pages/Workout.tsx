@@ -523,15 +523,16 @@ export default function Workout() {
       // Continue anyway — data is in outbox for retry
     }
 
-    // E3 trace: workout completion
+    // E3 trace: workout completion — P0 FIX: real payload check
     if (isDevTraceEnabled()) {
-      const hasRpe = allSets.some(s => s.rpe !== null && s.rpe !== undefined);
+      // Check that every set in the flush payload actually has the rpe key present
+      const everySetHasRpeKey = allSets.every(s => 'rpe' in s);
       pushTraceEvent({
         type: 'WORKOUT_COMPLETE',
         session_id: sessionId,
         count_sets_in_cache: allSets.length,
         count_sets_upserted: flushResult.flushed,
-        includes_rpe_field: hasRpe,
+        includes_rpe_field: everySetHasRpeKey,
         db_result: flushResult.offline ? 'offline' : flushResult.failed > 0 ? 'error' : 'ok',
         outbox_queued: flushResult.offline || flushResult.failed > 0,
       });

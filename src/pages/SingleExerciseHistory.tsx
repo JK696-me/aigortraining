@@ -215,18 +215,26 @@ export default function SingleExerciseHistory() {
         for (const se of sessionExercises) {
           const { data: setsData } = await supabase
             .from('sets')
-            .select('weight, reps, set_index')
+            .select('weight, reps, set_index, rpe')
             .eq('session_exercise_id', se.id)
             .order('set_index');
 
           const sets = setsData || [];
           const session = se.sessions as { id: string; completed_at: string; status: string; user_id: string };
 
+          // P0 FIX: Compute RPE from sets (avg rounded), fallback to session_exercises.rpe
+          const setRpeValues = sets
+            .map((s: { rpe?: number | null }) => s.rpe)
+            .filter((r): r is number => r !== null && r !== undefined);
+          const computedRpe = setRpeValues.length > 0
+            ? Math.round(setRpeValues.reduce((a, b) => a + b, 0) / setRpeValues.length)
+            : se.rpe;
+
           history.push({
             session_id: session.id,
             session_exercise_id: se.id,
             completed_at: session.completed_at,
-            rpe: se.rpe,
+            rpe: computedRpe,
             sets,
           });
 
