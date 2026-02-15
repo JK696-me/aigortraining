@@ -58,7 +58,9 @@ export function useCompletedSessionsList() {
           workout_templates(name)
         `)
         .eq('user_id', user.id)
-        .in('status', ['completed', 'completed_pending']) // Include both statuses
+        // P0 FIX: Broaden filter to catch sessions stuck as 'draft' with completed_at set
+        .or('status.in.(completed,completed_pending),completed_at.not.is.null')
+        .not('completed_at', 'is', null)
         .order('completed_at', { ascending: false })
         .limit(PAGE_SIZE)
 
