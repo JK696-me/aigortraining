@@ -674,6 +674,22 @@ export default function Workout() {
       // Timeout or error - treat as offline, queue for later sync
       setCompletionStatus('offline_queued');
       
+      // P0 FIX: Set status to completed_pending in DB so history can find it
+      try {
+        await supabase
+          .from('sessions')
+          .update({
+            status: 'completed_pending',
+            completed_at: now.toISOString(),
+            elapsed_seconds: finalElapsed,
+            timer_running: false,
+            undo_available_until: undoUntil.toISOString(),
+          })
+          .eq('id', completedSessionId);
+      } catch (e) {
+        console.warn('[Workout] Failed to set completed_pending:', e);
+      }
+      
       // Store pending completion in localStorage for retry
       localStorage.setItem(`pending_completion_${completedSessionId}`, JSON.stringify({
         sessionId: completedSessionId,
@@ -682,14 +698,10 @@ export default function Workout() {
         undoUntil: undoUntil.toISOString(),
       }));
       
-      // Keep optimistic session in cache with pending status
-      // It will be synced later
-      
       setTimeout(() => {
         setCompletionStatus(null);
         setCompletionStep(1);
         completionRequestIdRef.current = null;
-        // NO navigate('/') - let user stay on current screen
       }, 800);
     }
   }, [sessionId, user, locale, clearDraft, handleUndoWorkout, navigate, queryClient, sessionMetadata, sessionExercises]);

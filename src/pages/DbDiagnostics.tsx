@@ -19,9 +19,13 @@ interface DiagnosticResult {
 
 export default function DbDiagnostics() {
   const [results, setResults] = useState<DiagnosticResult[]>([])
+  const [historyAudit, setHistoryAudit] = useState<DiagnosticResult[]>([])
   const [isRunning, setIsRunning] = useState(false)
+  const [isRunningAudit, setIsRunningAudit] = useState(false)
   const [isBackfilling, setIsBackfilling] = useState(false)
+  const [isRepairing, setIsRepairing] = useState(false)
   const [backfillResult, setBackfillResult] = useState<string | null>(null)
+  const [repairResult, setRepairResult] = useState<string | null>(null)
   const [lastRun, setLastRun] = useState<Date | null>(null)
   const [copied, setCopied] = useState(false)
   const { user } = useAuth()
@@ -76,6 +80,122 @@ export default function DbDiagnostics() {
       setBackfillResult(`Error: ${err}`)
     } finally {
       setIsBackfilling(false)
+    }
+  }
+
+  async function runHistoryAudit() {
+    if (!user) return
+    setIsRunningAudit(true)
+    const out: DiagnosticResult[] = []
+    try {
+      // H1: Sessions by status (last 30 days)
+      const { data: h1 } = await supabase
+        .from('sessions')
+        .select('id, status')
+        .eq('user_id', user.id)
+
+      const statusCounts = new Map<string, number>()
+      for (const s of h1 || []) {
+        statusCounts.set(s.status, (statusCounts.get(s.status) || 0) + 1)
+      }
+      const h1Rows = Array.from(statusCounts.entries()).map(([status, count]) => ({ status, count }))
+      out.push({
+        name: 'H1. Сессии по статусам',
+        description: 'Кол-во сессий текущего пользователя по статусам',
+        query: 'SELECT status, COUNT(*) FROM sessions WHERE user_id=me GROUP BY status',
+        status: 'ok',
+        count: h1Rows.length,
+        data: h1Rows,
+      })
+
+      // H2: Sessions with completed_at NOT NULL, by status
+      const { data: h2 } = await supabase
+        .from('sessions')
+        .select('id, status, completed_at')
+        .eq('user_id', user.id)
+        .not('completed_at', 'is', null)
+
+      const h2StatusCounts = new Map<string, number>()
+      for (const s of h2 || []) {
+        h2StatusCounts.set(s.status, (h2StatusCounts.get(s.status) || 0) + 1)
+      }
+      const h2Rows = Array.from(h2StatusCounts.entries()).map(([status, count]) => ({ status, count }))
+      out.push({
+        name: 'H2. Сессии с completed_at ≠ NULL',
+        description: 'Статусы сессий с заполненным completed_at',
+        query: 'SELECT status, COUNT(*) FROM sessions WHERE completed_at IS NOT NULL GROUP BY status',
+        status: h2Rows.some(r => r.status === 'draft') ? 'warning' : 'ok',
+        count: h2Rows.reduce((s, r) => s + r.count, 0),
+        data: h2Rows,
+      })
+
+      // H3: Anomalies
+      const { data: h3 } = await supabase
+        .from('sessions')
+        .select('id, date, status, completed_at')
+        .eq('user_id', user.id)
+        .or('and(completed_at.not.is.null,status.eq.draft),and(status.in.(completed,completed_pending),completed_at.is.null)')
+        .order('completed_at', { ascending: false, nullsFirst: false })
+        .limit(20)
+
+      out.push({
+        name: 'H3. Аномалии статусов',
+        description: 'completed_at ≠ NULL + status=draft, ИЛИ status=completed/completed_pending + completed_at IS NULL',
+        query: 'sessions WHERE (completed_at NOT NULL AND status=draft) OR (status IN completed,completed_pending AND completed_at IS NULL)',
+        status: (h3 || []).length > 0 ? 'error' : 'ok',
+        count: (h3 || []).length,
+        data: (h3 || []).map(s => ({
+          id: s.id,
+          date: s.date,
+          status: s.status,
+          completed_at: s.completed_at,
+        })),
+      })
+
+      setHistoryAudit(out)
+    } catch (err) {
+      console.error('History audit error:', err)
+    } finally {
+      setIsRunningAudit(false)
+    }
+  }
+
+  async function runRepairStatuses() {
+    if (!user) return
+    setIsRepairing(true)
+    setRepairResult(null)
+    try {
+      // Find sessions with completed_at NOT NULL but status='draft'
+      const { data: broken } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'draft')
+        .not('completed_at', 'is', null)
+
+      if (!broken || broken.length === 0) {
+        setRepairResult('0 rows — нет аномалий для ремонта')
+        setIsRepairing(false)
+        return
+      }
+
+      let repaired = 0
+      for (const s of broken) {
+        const { error } = await supabase
+          .from('sessions')
+          .update({ status: 'completed' })
+          .eq('id', s.id)
+        if (!error) repaired++
+      }
+
+      setRepairResult(`${repaired} из ${broken.length} сессий отремонтировано (status → completed)`)
+      // Re-run audit to show updated state
+      runHistoryAudit()
+    } catch (err) {
+      console.error('Repair error:', err)
+      setRepairResult(`Error: ${err}`)
+    } finally {
+      setIsRepairing(false)
     }
   }
 
@@ -436,6 +556,91 @@ export default function DbDiagnostics() {
             )}
           </Card>
         ))}
+
+        {/* History Audit Section */}
+        <Card className="border-blue-500/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Database className="h-5 w-5 text-blue-500" />
+              History Audit (H1–H3)
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Проверка статусов сессий и аномалий
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button
+              variant="outline"
+              onClick={runHistoryAudit}
+              disabled={isRunningAudit}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRunningAudit ? "animate-spin" : ""}`} />
+              {isRunningAudit ? "Проверка..." : "Run History Audit"}
+            </Button>
+            
+            {historyAudit.map((result, idx) => (
+              <div key={idx} className="space-y-2">
+                <div className="flex items-center gap-2">
+                  {result.status === "ok" ? (
+                    <CheckCircle className="h-4 w-4 text-emerald-600" />
+                  ) : (
+                    <AlertTriangle className={`h-4 w-4 ${result.status === "error" ? "text-destructive" : "text-amber-500"}`} />
+                  )}
+                  <span className="font-medium text-sm">{result.name}</span>
+                  <Badge variant={result.status === "ok" ? "outline" : result.status === "error" ? "destructive" : "secondary"}>
+                    {result.count}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{result.description}</p>
+                {result.data.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          {Object.keys(result.data[0]).map((key) => (
+                            <TableHead key={key} className="text-xs whitespace-nowrap">{key}</TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {result.data.slice(0, 20).map((row, rowIdx) => (
+                          <TableRow key={rowIdx}>
+                            {Object.values(row).map((val, colIdx) => (
+                              <TableCell key={colIdx} className="text-xs font-mono whitespace-nowrap">
+                                {val === null ? <span className="text-muted-foreground italic">null</span> : String(val).slice(0, 60)}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            ))}
+            
+            {/* Repair button — only show if H3 found anomalies */}
+            {historyAudit.some(h => h.name.includes('H3') && h.count > 0) && (
+              <div className="pt-2 border-t border-border">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={runRepairStatuses}
+                  disabled={isRepairing}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isRepairing ? "animate-spin" : ""}`} />
+                  {isRepairing ? "Ремонт..." : "Repair History Statuses"}
+                </Button>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Установит status='completed' для сессий с completed_at ≠ NULL и status='draft'
+                </p>
+                {repairResult && (
+                  <p className="text-sm font-mono text-muted-foreground mt-1">{repairResult}</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Backfill RPE Section */}
         <Card className="border-amber-500/50">

@@ -395,7 +395,10 @@ export default function ExerciseHistory() {
           <Card className="p-8 bg-card border-border text-center">
             <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="font-semibold text-foreground mb-2">{t('noCompletedWorkouts')}</h3>
-            <p className="text-sm text-muted-foreground">{t('completeFirstWorkout')}</p>
+            <p className="text-sm text-muted-foreground mb-4">{t('completeFirstWorkout')}</p>
+            <Button onClick={() => navigate('/workout')} className="mt-2">
+              {locale === 'ru' ? 'Начать тренировку' : 'Start Workout'}
+            </Button>
           </Card>
         ) : (
           <div className="space-y-3">
