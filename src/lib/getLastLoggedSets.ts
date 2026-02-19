@@ -53,7 +53,7 @@ export async function getLastLoggedSets({
     `.trim())
     .eq('exercise_id', exerciseId)
     .eq('sessions.user_id', userId)
-    .in('sessions.status', ['completed', 'completed_pending'])
+    .not('sessions.completed_at', 'is', null)
     .order('sessions(completed_at)', { ascending: false })
     .limit(1)
 
@@ -81,7 +81,7 @@ export async function getLastLoggedSets({
         session:sessions!inner(id, completed_at)
       `.trim())
       .eq('sessions.user_id', userId)
-      .in('sessions.status', ['completed', 'completed_pending'])
+      .not('sessions.completed_at', 'is', null)
       .order('sessions(completed_at)', { ascending: false })
       .limit(50)
 
