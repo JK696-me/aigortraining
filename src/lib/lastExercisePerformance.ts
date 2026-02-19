@@ -92,7 +92,7 @@ export async function getLastExercisePerformance({
     `.trim())
     .eq('exercise_id', exerciseId)
     .eq('sessions.user_id', userId)
-    .in('sessions.status', ['completed', 'completed_pending'])
+    .not('sessions.completed_at', 'is', null)
     .order('sessions(completed_at)', { ascending: false })
     .limit(1)
 
@@ -132,7 +132,7 @@ export async function getLastExercisePerformance({
         `.trim())
         .in('exercise_id', matchingExerciseIds)
         .eq('sessions.user_id', userId)
-        .in('sessions.status', ['completed', 'completed_pending'])
+        .not('sessions.completed_at', 'is', null)
         .order('sessions(completed_at)', { ascending: false })
         .limit(1)
 
@@ -157,7 +157,7 @@ export async function getLastExercisePerformance({
           session:sessions!inner(id, user_id, status, completed_at)
         `.trim())
         .eq('sessions.user_id', userId)
-        .in('sessions.status', ['completed', 'completed_pending'])
+        .not('sessions.completed_at', 'is', null)
         .order('sessions(completed_at)', { ascending: false })
         .limit(50)
 
@@ -217,7 +217,7 @@ export async function getLastExercisePerformance({
           `.trim())
           .in('exercise_id', aliasExerciseIds)
           .eq('sessions.user_id', userId)
-          .in('sessions.status', ['completed', 'completed_pending'])
+          .not('sessions.completed_at', 'is', null)
           .order('sessions(completed_at)', { ascending: false })
           .limit(1)
 
@@ -242,7 +242,7 @@ export async function getLastExercisePerformance({
             session:sessions!inner(id, user_id, status, completed_at)
           `.trim())
           .eq('sessions.user_id', userId)
-          .in('sessions.status', ['completed', 'completed_pending'])
+          .not('sessions.completed_at', 'is', null)
           .order('sessions(completed_at)', { ascending: false })
           .limit(50)
 
@@ -275,7 +275,7 @@ export async function getLastExercisePerformance({
         session:sessions!inner(id, user_id, status, completed_at)
       `.trim())
       .eq('sessions.user_id', userId)
-      .in('sessions.status', ['completed', 'completed_pending'])
+      .not('sessions.completed_at', 'is', null)
       .order('sessions(completed_at)', { ascending: false })
       .limit(50)
 

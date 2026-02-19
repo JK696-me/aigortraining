@@ -385,7 +385,11 @@ export default function Workout() {
             queryClient.invalidateQueries({ queryKey: queryKeys.sessions.fullCache(sessionId) });
           });
         
-        toast.success(locale === 'ru' ? 'Упражнение добавлено' : 'Exercise added');
+        toast.success(
+          lastLogged 
+            ? (locale === 'ru' ? 'Подставили по прошлой тренировке' : 'Auto-filled from last workout')
+            : (locale === 'ru' ? 'Упражнение добавлено' : 'Exercise added')
+        );
       }
       
       setShowPicker(false);
@@ -1107,7 +1111,18 @@ export default function Workout() {
                 <p className="text-sm text-muted-foreground">{t('addExercisesToStart')}</p>
               </Card>
             }
-            renderItem={(se: SessionExercise, _index: number, dragHandle: React.ReactNode) => (
+            renderItem={(se: SessionExercise, _index: number, dragHandle: React.ReactNode) => {
+              // Compute exercise RPE from cached sets (source of truth)
+              const cachedEx = cachedSession?.exercises.find(e => e.id === se.id);
+              const completedSetsWithRpe = cachedEx?.sets.filter(s => s.rpe !== null && s.is_completed) || [];
+              const computedRpe = completedSetsWithRpe.length > 0
+                ? Math.round(completedSetsWithRpe.reduce((sum, s) => sum + (s.rpe ?? 0), 0) / completedSetsWithRpe.length)
+                : null;
+              const displayRpe = computedRpe ?? (se as any).rpe_display ?? null;
+              const completedCount = cachedEx?.sets.filter(s => s.is_completed).length ?? 0;
+              const totalCount = cachedEx?.sets.length ?? 0;
+
+              return (
               <Card className="p-4 bg-card border-border">
                 <div className="flex items-center gap-3">
                   {/* Drag handle */}
@@ -1124,7 +1139,9 @@ export default function Workout() {
                     <div className="flex-1">
                       <h3 className="font-semibold text-foreground">{se.exercise?.name}</h3>
                       <p className="text-sm text-muted-foreground">
-                        {se.rpe_display ? `RPE ${se.rpe_display}` : t('sets')}
+                        {completedCount > 0
+                          ? `${completedCount}/${totalCount} ${t('sets')}${displayRpe ? ` · RPE ${displayRpe}` : ''}`
+                          : `${totalCount} ${t('sets')}`}
                       </p>
                     </div>
                   </div>
@@ -1170,7 +1187,8 @@ export default function Workout() {
                   </div>
                 </div>
               </Card>
-            )}
+              )
+            }}
           />
         </div>
 
